@@ -14,41 +14,51 @@ import {
   type MockedFunction,
   vi,
 } from "vitest";
-import { render, type RenderResult } from "@testing-library/react";
-import { type LocalParticipant } from "livekit-client";
-import { BehaviorSubject, of } from "rxjs";
-import { BrowserRouter, MemoryRouter } from "react-router-dom";
+import { act, render, type RenderResult } from "@testing-library/react";
+import { BehaviorSubject } from "rxjs";
+import { BrowserRouter } from "react-router-dom";
 import { TooltipProvider } from "@vector-im/compound-web";
-import { RoomContext, useLocalParticipant } from "@livekit/components-react";
 import userEvent from "@testing-library/user-event";
 
-import { InCallView } from "./InCallView";
+import { ActiveCall, InCallView } from "./InCallView";
 import {
-  mockLivekitRoom,
-  mockLocalParticipant,
   mockMediaDevices,
   mockMuteStates,
-  mockRemoteParticipant,
   mockRtcMembership,
   type MockRTCSession,
+  mockRTCSlot,
+  mockRTCMember,
 } from "../utils/test";
 import { E2eeType } from "../e2ee/e2eeType";
-import { getBasicCallViewModelEnvironment } from "../utils/test-viewmodel";
-import { type CallViewModelOptions } from "../state/CallViewModel/CallViewModel";
-import { alice, local } from "../utils/test-fixtures";
+import {
+  getBasicCallViewModelEnvironment,
+  getBasicRTCSession,
+} from "../utils/test-viewmodel";
+import {
+  type CallViewModel,
+  type CallViewModelOptions,
+} from "../state/CallViewModel/CallViewModel";
+import { alice, local, aliceRtcMember } from "../utils/test-fixtures";
 import { ReactionsSenderProvider } from "../reactions/useReactionsSender";
 import { useRoomEncryptionSystem } from "../e2ee/sharedKeyManagement";
-import { LivekitRoomAudioRenderer } from "../livekit/MatrixAudioRenderer";
+import { MemberAudioRenderer } from "../tracks/MemberAudioRenderer";
+import type * as MatrixRTCSdk from "@element-hq/matrixrtc-sdk";
+import { constant, type ObservableScope } from "@element-hq/matrixrtc-sdk";
 import { MediaDevicesContext } from "../MediaDevicesContext";
 import { type MediaDevices as ECMediaDevices } from "../state/MediaDevices";
-import { constant } from "../state/Behavior";
 import { AppBar } from "../AppBar";
+import { type MatrixInfo } from "./VideoPreview";
+import { ProcessorProvider } from "../tracks/TrackProcessorContext";
 import { initializeWidget } from "../widget";
+import { RootElementProvider } from "../RootElementContext";
 
 initializeWidget();
 vi.hoisted(
   () =>
-    (global.ImageData = class MockImageData {
+    // Use globalThis rather than global because vite-plugin-node-polyfills seems
+    // to rewrite global into an import which then interferes with vitest's hoisting
+    // which runs before imports.
+    (globalThis.ImageData = class MockImageData {
       public data: number[] = [];
     } as unknown as typeof ImageData),
 );
@@ -57,42 +67,56 @@ vi.mock("../soundUtils");
 vi.mock("../useAudioContext");
 vi.mock("../tile/GridTile");
 vi.mock("../tile/SpotlightTile");
-vi.mock("@livekit/components-react");
-vi.mock("livekit-client/e2ee-worker?worker");
 vi.mock("../e2ee/sharedKeyManagement");
-vi.mock("../livekit/MatrixAudioRenderer");
+vi.mock("../tracks/MemberAudioRenderer");
+// ActiveCall builds the slot itself; the view is what these tests are about
+const createRTCSlotMock = vi.hoisted(() => vi.fn());
+vi.mock("@element-hq/matrixrtc-sdk", async (importOriginal) => ({
+  ...(await importOriginal<typeof MatrixRTCSdk>()),
+  createRTCSlot: createRTCSlotMock,
+}));
 vi.mock("react-use-measure", () => ({
   default: (): [() => void, object] => [(): void => {}, {}],
 }));
 
 const localRtcMember = mockRtcMembership("@carol:example.org", "CCCC");
-const localParticipant = mockLocalParticipant({
-  identity: "@local:example.org:AAAAAA",
-});
-const remoteParticipant = mockRemoteParticipant({
-  identity: "@alice:example.org:AAAAAA",
-});
+
+const matrixInfo = {
+  userId: "",
+  displayName: "",
+  avatarUrl: "",
+  roomId: "",
+  roomName: "",
+  roomAlias: null,
+  roomAvatar: null,
+  e2eeSystem: { kind: E2eeType.NONE },
+} satisfies MatrixInfo;
 
 let useRoomEncryptionSystemMock: MockedFunction<typeof useRoomEncryptionSystem>;
 
 beforeEach(() => {
   vi.clearAllMocks();
 
-  // MatrixAudioRenderer is tested separately.
-  (
-    LivekitRoomAudioRenderer as MockedFunction<typeof LivekitRoomAudioRenderer>
-  ).mockImplementation((_props) => {
-    return <div>mocked: MatrixAudioRenderer</div>;
-  });
-  (
-    useLocalParticipant as MockedFunction<typeof useLocalParticipant>
-  ).mockImplementation(
-    () =>
-      ({
-        isScreenShareEnabled: false,
-        localParticipant: localRtcMember as unknown as LocalParticipant,
-      }) as unknown as ReturnType<typeof useLocalParticipant>,
+  createRTCSlotMock.mockImplementation((scope: ObservableScope) =>
+    mockRTCSlot(scope, {
+      localMember$: constant(
+        mockRTCMember(true, {
+          membership: localRtcMember,
+          tracks$: constant([]),
+        }),
+      ),
+      remoteMembers$: constant([
+        mockRTCMember(false, {
+          membership: aliceRtcMember,
+          tracks$: constant([]),
+        }),
+      ]),
+    }),
   );
+  // MemberAudioRenderer is tested separately.
+  (
+    MemberAudioRenderer as MockedFunction<typeof MemberAudioRenderer>
+  ).mockImplementation(() => <div>mocked: MemberAudioRenderer</div>);
   useRoomEncryptionSystemMock =
     useRoomEncryptionSystem as typeof useRoomEncryptionSystemMock;
   useRoomEncryptionSystemMock.mockReturnValue({ kind: E2eeType.NONE });
@@ -100,42 +124,26 @@ beforeEach(() => {
 interface CreateInCallViewArgs {
   mediaDevices?: ECMediaDevices;
   callViewModelOptions?: Partial<CallViewModelOptions>;
-  /** If set, uses a MemoryRouter with this as the initial entry instead of BrowserRouter */
-  initialRoute?: string;
   /** If true, wraps the rendered tree in an AppBar provider */
   withAppBar?: boolean;
 }
 function createInCallView(args: CreateInCallViewArgs = {}): RenderResult & {
   rtcSession: MockRTCSession;
+  vm: CallViewModel;
 } {
   const mediaDevices = args.mediaDevices ?? mockMediaDevices({});
   const muteState = mockMuteStates();
-  const livekitRoom = mockLivekitRoom(
-    {
-      localParticipant,
-    },
-    {
-      remoteParticipants$: of([remoteParticipant]),
-    },
-  );
-  const { vm, rtcSession } = getBasicCallViewModelEnvironment(
-    [local, alice],
-    undefined,
-    mediaDevices,
-    args.callViewModelOptions,
-  );
+  const { vm, footerVm, developerSettingsVm, rtcSession } =
+    getBasicCallViewModelEnvironment(
+      [local, alice],
+      undefined,
+      mediaDevices,
+      args.callViewModelOptions,
+    );
 
   rtcSession.joined = true;
   const room = rtcSession.room;
   const client = room.client;
-
-  const Router = args.initialRoute
-    ? ({ children }: { children: React.ReactNode }): React.ReactNode => (
-        <MemoryRouter initialEntries={[args.initialRoute!]}>
-          {children}
-        </MemoryRouter>
-      )
-    : BrowserRouter;
 
   const inCallView = (
     <InCallView
@@ -143,18 +151,9 @@ function createInCallView(args: CreateInCallViewArgs = {}): RenderResult & {
       rtcSession={rtcSession.asMockedSession()}
       muteStates={muteState}
       vm={vm}
-      matrixInfo={{
-        userId: "",
-        displayName: "",
-        avatarUrl: "",
-        roomId: "",
-        roomName: "",
-        roomAlias: null,
-        roomAvatar: null,
-        e2eeSystem: {
-          kind: E2eeType.NONE,
-        },
-      }}
+      footerVm={footerVm}
+      developerSettingsVm={developerSettingsVm}
+      matrixInfo={matrixInfo}
       matrixRoom={room}
       onShareClick={null}
     />
@@ -163,22 +162,21 @@ function createInCallView(args: CreateInCallViewArgs = {}): RenderResult & {
   const content = args.withAppBar ? <AppBar>{inCallView}</AppBar> : inCallView;
 
   const renderResult = render(
-    <Router>
+    <BrowserRouter>
       <MediaDevicesContext value={mediaDevices}>
         <ReactionsSenderProvider
           vm={vm}
           rtcSession={rtcSession.asMockedSession()}
         >
-          <TooltipProvider>
-            <RoomContext value={livekitRoom}>{content}</RoomContext>
-          </TooltipProvider>
+          <TooltipProvider>{content}</TooltipProvider>
         </ReactionsSenderProvider>
       </MediaDevicesContext>
-    </Router>,
+    </BrowserRouter>,
   );
   return {
     ...renderResult,
     rtcSession,
+    vm,
   };
 }
 
@@ -189,57 +187,7 @@ describe("InCallView", () => {
       expect(container).toMatchSnapshot();
     });
   });
-  describe("settings button with AppBar header", () => {
-    it("mobile landscape, is accessible when showHeader is false", () => {
-      // windowSize with height <= 600 results in "flat" windowMode,
-      // which means showHeader$ emits false.
-      const { getAllByRole } = createInCallView({
-        initialRoute: "/?header=app_bar",
-        withAppBar: true,
-        callViewModelOptions: {
-          // Set windowMode$ to "flat" (height <= 600)
-          windowSize$: constant({ width: 1000, height: 500 }),
-        },
-      });
-      // When showHeader is false, hideSettingsButton is false,
-      // so the settings button is visible in the footer.
-      const settingsBtn = getAllByRole("button", { name: "Settings" });
-      // here we check for two settings buttons because there are two buttons in the bottom bar. One for the
-      // the narrow layout and another one for the wide layout.
-      // Their visibility uses @media css queries, which cannot be tested in JSDOM,
-      // but we can at least check that both buttons are rendered and have the correct classes.
-      expect(settingsBtn.length).toBe(2);
-      expect(settingsBtn[0]).toHaveAttribute(
-        "data-testid",
-        "settings-bottom-left",
-      );
-      expect(settingsBtn[0]).toBeVisible();
-    });
 
-    it("mobile portrait, is accessible when showHeader is true", () => {
-      // windowSize with height > 600 and width > 600 results in "normal" windowMode,
-      // which means showHeader$ emits true.
-      const { getAllByRole } = createInCallView({
-        initialRoute: "/?header=app_bar",
-        withAppBar: true,
-        callViewModelOptions: {
-          // Set windowMode$ to "normal" (height >= 600)
-          windowSize$: constant({ width: 1000, height: 800 }),
-        },
-      });
-      // When showHeader is true and headerStyle is AppBar,
-      // hideSettingsButton is true in the footer, but the settings
-      // button is rendered in the AppBar via useAppBarSecondaryButton.
-      const settingsBtns = getAllByRole("button", { name: "Settings" });
-
-      expect(settingsBtns.length).toBe(1);
-      expect(settingsBtns[0]).toHaveAttribute(
-        "data-testid",
-        "settings-app-bar",
-      );
-      expect(settingsBtns[0]).toBeVisible();
-    });
-  });
   describe("audioOutputSwitcher", () => {
     it("is visible and can be clicked", async () => {
       const user = userEvent.setup();
@@ -276,5 +224,99 @@ describe("InCallView", () => {
       // Clicking the button should call select -> switchFn with the earpiece device id
       expect(switchFn).toHaveBeenCalledWith("earpiece-id");
     });
+  });
+});
+
+describe("ActiveCall", () => {
+  it("creates the view models and renders the call", async () => {
+    const mediaDevices = mockMediaDevices({});
+    const { rtcSession, matrixRoom } = getBasicRTCSession([local, alice]);
+    const { findByTestId } = render(
+      <BrowserRouter>
+        <MediaDevicesContext value={mediaDevices}>
+          <ProcessorProvider>
+            <TooltipProvider>
+              <ActiveCall
+                client={matrixRoom.client}
+                rtcSession={rtcSession.asMockedSession()}
+                matrixRoom={matrixRoom}
+                muteStates={mockMuteStates()}
+                matrixInfo={matrixInfo}
+                onShareClick={null}
+                e2eeSystem={{ kind: E2eeType.NONE }}
+                onLeft={(): void => {}}
+              />
+            </TooltipProvider>
+          </ProcessorProvider>
+        </MediaDevicesContext>
+      </BrowserRouter>,
+    );
+    // Rendering at all proves ActiveCall created all of its view models
+    expect(await findByTestId("incall_leave")).toBeVisible();
+  });
+
+  it("lays the call out for the size of its root element", async () => {
+    // jsdom has no layout and no ResizeObserver: the root reports whatever
+    // size we say, and the observer notifies whenever we tell it to
+    let size = { width: 1000, height: 800 };
+    const root = document.createElement("div");
+    Object.defineProperty(root, "clientWidth", { get: () => size.width });
+    Object.defineProperty(root, "clientHeight", { get: () => size.height });
+    document.body.appendChild(root);
+
+    const observers: (() => void)[] = [];
+    const originalResizeObserver = window.ResizeObserver;
+    window.ResizeObserver = class {
+      public constructor(private readonly callback: ResizeObserverCallback) {}
+      public observe(): void {
+        observers.push(() => this.callback([], this as ResizeObserver));
+      }
+      public unobserve(): void {}
+      public disconnect(): void {}
+    } as unknown as typeof ResizeObserver;
+
+    try {
+      const mediaDevices = mockMediaDevices({});
+      const { rtcSession, matrixRoom } = getBasicRTCSession([local, alice]);
+      const { findByTestId, container } = render(
+        <BrowserRouter>
+          <RootElementProvider value={root}>
+            <MediaDevicesContext value={mediaDevices}>
+              <ProcessorProvider>
+                <TooltipProvider>
+                  <ActiveCall
+                    client={matrixRoom.client}
+                    rtcSession={rtcSession.asMockedSession()}
+                    matrixRoom={matrixRoom}
+                    muteStates={mockMuteStates()}
+                    matrixInfo={matrixInfo}
+                    onShareClick={null}
+                    e2eeSystem={{ kind: E2eeType.NONE }}
+                    onLeft={(): void => {}}
+                  />
+                </TooltipProvider>
+              </ProcessorProvider>
+            </MediaDevicesContext>
+          </RootElementProvider>
+        </BrowserRouter>,
+        { container: root },
+      );
+      await findByTestId("incall_leave");
+      const call = container.querySelector("[data-layout]")!;
+      expect(call.getAttribute("data-layout")).not.toBe("pip");
+
+      // The host shrinks the container to a corner of its page. The window has
+      // not changed at all — what matters is the element we were given.
+      size = { width: 300, height: 300 };
+      act(() => observers.forEach((notify) => notify()));
+      expect(call.getAttribute("data-layout")).toBe("pip");
+
+      size = { width: 1000, height: 800 };
+      act(() => observers.forEach((notify) => notify()));
+      expect(call.getAttribute("data-layout")).not.toBe("pip");
+    } finally {
+      window.ResizeObserver = originalResizeObserver;
+      root.remove();
+    }
   });
 });

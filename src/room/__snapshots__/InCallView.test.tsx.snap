@@ -3,28 +3,29 @@
 exports[`InCallView > rendering > renders 1`] = `
 <div>
   <div
-    class="inRoom"
+    class="_inRoom_4e7ff8"
+    data-layout="one-on-one-desktop"
   >
     <header
-      class="header header"
+      class="_header_e4b327 _header_4e7ff8"
     >
       <div
-        class="nav leftNav"
+        class="_nav_e4b327 _leftNav_e4b327"
       >
         <div
-          class="roomHeaderInfo"
+          class="_roomHeaderInfo_e4b327"
           data-size="lg"
         >
           <span
             aria-label=""
-            class="_avatar_va14e_8 roomAvatar _avatar-imageless_va14e_55"
+            class="_avatar_va14e_8 _roomAvatar_e4b327 _avatar-imageless_va14e_55"
             data-color="1"
             data-type="round"
             role="img"
             style="--cpd-avatar-size: 56px;"
           />
           <div
-            class="nameLine"
+            class="_nameLine_e4b327"
           >
             <h1
               class="_typography_6v6n8_153 _font-heading-md-semibold_6v6n8_112"
@@ -35,7 +36,7 @@ exports[`InCallView > rendering > renders 1`] = `
             >
               <svg
                 aria-labelledby="_r_0_"
-                class="lock"
+                class="_lock_edc97d"
                 data-encrypted="false"
                 fill="currentColor"
                 height="16"
@@ -50,7 +51,7 @@ exports[`InCallView > rendering > renders 1`] = `
             </span>
           </div>
           <div
-            class="participantsLine"
+            class="_participantsLine_e4b327"
           >
             <svg
               aria-label="Participants"
@@ -80,21 +81,24 @@ exports[`InCallView > rendering > renders 1`] = `
         </div>
       </div>
       <div
-        class="nav rightNav"
+        class="_nav_e4b327 _rightNav_e4b327"
       />
     </header>
+    <div>
+      mocked: MemberAudioRenderer
+    </div>
     <div
-      class="scrollingGrid grid"
+      class="_scrollingGrid_4e7ff8 _grid_b0d1cd"
     >
       <div
-        class="layer"
+        class="_layer_185815"
       >
         <div
-          class="container slot"
+          class="_container_185815 _slot_b0d1cd"
           data-id="1"
         >
           <div
-            class="slot local slot"
+            class="_slot_185815 _local_185815 _slot_b0d1cd"
             data-block-alignment="start"
             data-id="0"
             data-inline-alignment="end"
@@ -103,21 +107,22 @@ exports[`InCallView > rendering > renders 1`] = `
       </div>
     </div>
     <div
-      class="fixedGrid grid"
+      class="_fixedGrid_4e7ff8 _grid_b0d1cd"
+      style="inset-block-start: NaNpx;"
     >
       <div />
     </div>
     <div
-      class="bg animate"
+      class="_bg_2f5303 _animate_2f5303"
       data-state="closed"
     />
     <div
       aria-hidden="true"
-      class="overlay"
+      class="_overlay_eb6724"
       data-show="false"
     >
       <div
-        class="_big-icon_1ssbv_8 icon"
+        class="_big-icon_1ssbv_8 _icon_eb6724"
         data-kind="primary"
         data-size="lg"
       >
@@ -156,21 +161,22 @@ exports[`InCallView > rendering > renders 1`] = `
         Back to Speaker Mode
       </button>
       <div
-        class="spacer"
+        class="_spacer_eb6724"
       />
     </div>
     <div
-      class="container"
+      class="_container_8084b5"
     />
     <div
-      class="footer"
+      class="_footer_4e7ff8 _footer_20b7b4"
+      data-testid="footer-container"
     >
       <div
-        class="settingsLogoContainer"
+        class="_settingsLogoContainer_20b7b4"
       >
         <button
-          aria-labelledby="_r_8_"
-          class="_icon-button_1215g_8 settingsOnlyShowWide"
+          aria-labelledby="_r_b_"
+          class="_icon-button_1215g_8 _settingsOnlyShowWide_20b7b4"
           data-kind="secondary"
           data-testid="settings-bottom-left"
           role="button"
@@ -178,7 +184,7 @@ exports[`InCallView > rendering > renders 1`] = `
           tabindex="0"
         >
           <div
-            class="_indicator-icon_147l5_17"
+            class="_indicator-icon_j097f_17"
             style="--cpd-icon-button-size: 100%;"
           >
             <svg
@@ -196,7 +202,7 @@ exports[`InCallView > rendering > renders 1`] = `
           </div>
         </button>
         <div
-          class="logo"
+          class="_logo_20b7b4"
         >
           <svg
             aria-hidden="true"
@@ -301,11 +307,11 @@ exports[`InCallView > rendering > renders 1`] = `
         </div>
       </div>
       <div
-        class="buttons"
+        class="_buttons_20b7b4"
       >
         <button
-          aria-labelledby="_r_d_"
-          class="_button_1nw83_8 settingsOnlyShowNarrow _has-icon_1nw83_60 _icon-only_1nw83_53"
+          aria-labelledby="_r_g_"
+          class="_button_1nw83_8 _settingsOnlyShowNarrow_20b7b4 _has-icon_1nw83_60 _icon-only_1nw83_53"
           data-kind="secondary"
           data-size="lg"
           data-testid="settings-bottom-center"
@@ -326,9 +332,10 @@ exports[`InCallView > rendering > renders 1`] = `
           </svg>
         </button>
         <button
+          aria-busy="false"
           aria-checked="false"
           aria-disabled="true"
-          aria-labelledby="_r_i_"
+          aria-labelledby="_r_l_"
           class="_button_1nw83_8 _has-icon_1nw83_60 _icon-only_1nw83_53"
           data-kind="primary"
           data-size="lg"
@@ -350,9 +357,10 @@ exports[`InCallView > rendering > renders 1`] = `
           </svg>
         </button>
         <button
+          aria-busy="false"
           aria-checked="false"
           aria-disabled="true"
-          aria-labelledby="_r_n_"
+          aria-labelledby="_r_q_"
           class="_button_1nw83_8 _has-icon_1nw83_60 _icon-only_1nw83_53"
           data-kind="primary"
           data-size="lg"
@@ -374,8 +382,34 @@ exports[`InCallView > rendering > renders 1`] = `
           </svg>
         </button>
         <button
-          aria-labelledby="_r_s_"
-          class="_button_1nw83_8 endCall _has-icon_1nw83_60 _icon-only_1nw83_53 _destructive_1nw83_110"
+          aria-disabled="false"
+          aria-expanded="false"
+          aria-haspopup="true"
+          aria-labelledby="_r_v_"
+          class="_button_1nw83_8 _raiseHand_20b7b4 _has-icon_1nw83_60 _icon-only_1nw83_53"
+          data-kind="secondary"
+          data-size="lg"
+          role="button"
+          tabindex="0"
+        >
+          <svg
+            aria-hidden="true"
+            fill="currentColor"
+            height="24"
+            viewBox="0 0 24 24"
+            width="24"
+            xmlns="http://www.w3.org/2000/svg"
+          >
+            <path
+              clip-rule="evenodd"
+              d="M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10m3.536-6.464a1 1 0 0 0-1.415-1.415A3 3 0 0 1 12 15a3 3 0 0 1-2.121-.879 1 1 0 1 0-1.414 1.415A5 5 0 0 0 12 17c1.38 0 2.632-.56 3.536-1.464M10 10.5a1.5 1.5 0 1 1-3 0 1.5 1.5 0 0 1 3 0m5.5 1.5a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3"
+              fill-rule="evenodd"
+            />
+          </svg>
+        </button>
+        <button
+          aria-labelledby="_r_17_"
+          class="_button_1nw83_8 _has-icon_1nw83_60 _icon-only_1nw83_53 _destructive_1nw83_110"
           data-kind="primary"
           data-size="lg"
           data-testid="incall_leave"
@@ -396,47 +430,51 @@ exports[`InCallView > rendering > renders 1`] = `
           </svg>
         </button>
       </div>
-      <form
-        class="toggle layout"
+      <fieldset
+        aria-label="Layout"
+        class="_toggle_1t5ha_9 _layout_20b7b4"
+        data-size="lg"
       >
         <input
-          aria-labelledby="_r_11_"
-          name="layout"
+          aria-labelledby="_r_1d_"
+          name="_r_1c_"
           type="radio"
           value="spotlight"
         />
         <svg
           aria-hidden="true"
           fill="currentColor"
-          height="24"
+          height="1em"
           viewBox="0 0 24 24"
-          width="24"
+          width="1em"
           xmlns="http://www.w3.org/2000/svg"
         >
           <path
-            d="M5 5h14v8h-5a1 1 0 0 0-1 1v5H5zm10 14v-4h4v4zM5 21h14a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2"
+            clip-rule="evenodd"
+            d="M20 6H4v12h16zM4 4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2z"
+            fill-rule="evenodd"
           />
         </svg>
         <input
-          aria-labelledby="_r_16_"
+          aria-labelledby="_r_1i_"
           checked=""
-          name="layout"
+          name="_r_1c_"
           type="radio"
           value="grid"
         />
         <svg
           aria-hidden="true"
           fill="currentColor"
-          height="24"
+          height="1em"
           viewBox="0 0 24 24"
-          width="24"
+          width="1em"
           xmlns="http://www.w3.org/2000/svg"
         >
           <path
             d="M4 11a.97.97 0 0 1-.712-.287A.97.97 0 0 1 3 10V4q0-.424.288-.712A.97.97 0 0 1 4 3h6q.424 0 .713.288Q11 3.575 11 4v6q0 .424-.287.713A.97.97 0 0 1 10 11zm5-2V5H5v4zm5 12a.97.97 0 0 1-.713-.288A.97.97 0 0 1 13 20v-6q0-.424.287-.713A.97.97 0 0 1 14 13h6q.424 0 .712.287.288.288.288.713v6q0 .424-.288.712A.97.97 0 0 1 20 21zm5-2v-4h-4v4zM4 21a.97.97 0 0 1-.712-.288A.97.97 0 0 1 3 20v-6q0-.424.288-.713A.97.97 0 0 1 4 13h6q.424 0 .713.287.287.288.287.713v6q0 .424-.287.712A.97.97 0 0 1 10 21zm5-2v-4H5v4zm5-8a.97.97 0 0 1-.713-.287A.97.97 0 0 1 13 10V4q0-.424.287-.712A.97.97 0 0 1 14 3h6q.424 0 .712.288Q21 3.575 21 4v6q0 .424-.288.713A.97.97 0 0 1 20 11zm5-2V5h-4v4z"
           />
         </svg>
-      </form>
+      </fieldset>
     </div>
   </div>
 </div>

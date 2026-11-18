@@ -5,7 +5,6 @@ SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Element-Commercial
 Please see LICENSE in the repository root for full details.
 */
 
-import { type RemoteTrackPublication } from "livekit-client";
 import { test, expect } from "vitest";
 import { act, render, screen } from "@testing-library/react";
 import { axe } from "vitest-axe";
@@ -16,7 +15,8 @@ import { GridTile } from "./GridTile";
 import {
   mockRtcMembership,
   mockRemoteMedia,
-  mockRemoteParticipant,
+  mockLocalMedia,
+  mockMediaDevices,
 } from "../utils/test";
 import { GridTileViewModel } from "../state/TileViewModel";
 import { ReactionsSenderProvider } from "../reactions/useReactionsSender";
@@ -26,7 +26,6 @@ import {
   createRingingMedia,
   type RingingMediaViewModel,
 } from "../state/media/RingingMediaViewModel";
-import { type MuteStates } from "../state/MuteStates";
 
 global.IntersectionObserver = class MockIntersectionObserver {
   public observe(): void {}
@@ -55,18 +54,14 @@ const callVm = {
   handsRaised$: constant({}),
 } as Partial<CallViewModel> as CallViewModel;
 
-test("GridTile is accessible", async () => {
+test("GridTile displays remote media", async () => {
   const vm = mockRemoteMedia(
     mockRtcMembership("@alice:example.org", "AAAA"),
     {
       rawDisplayName: "Alice",
       getMxcAvatarUrl: () => "mxc://adfsg",
     },
-    mockRemoteParticipant({
-      setVolume() {},
-      getTrackPublication: () =>
-        ({}) as Partial<RemoteTrackPublication> as RemoteTrackPublication,
-    }),
+    [],
   );
 
   const { container } = render(
@@ -77,6 +72,40 @@ test("GridTile is accessible", async () => {
         targetWidth={300}
         targetHeight={200}
         showSpeakingIndicators
+        showNameTags
+        showRingingStatus
+        showOutline
+        focusable
+      />
+    </ReactionsSenderProvider>,
+  );
+  expect(await axe(container)).toHaveNoViolations();
+  // Name should be visible
+  screen.getByText("Alice");
+});
+
+test("GridTile displays local media", async () => {
+  const vm = mockLocalMedia(
+    mockRtcMembership("@alice:example.org", "AAAA"),
+    {
+      rawDisplayName: "Alice",
+      getMxcAvatarUrl: () => "mxc://adfsg",
+    },
+    [],
+    mockMediaDevices({}),
+  );
+
+  const { container } = render(
+    <ReactionsSenderProvider vm={callVm} rtcSession={fakeRtcSession}>
+      <GridTile
+        vm={new GridTileViewModel(constant(vm))}
+        onOpenProfile={() => {}}
+        targetWidth={300}
+        targetHeight={200}
+        showSpeakingIndicators
+        showNameTags
+        showRingingStatus
+        showOutline
         focusable
       />
     </ReactionsSenderProvider>,
@@ -92,10 +121,8 @@ test("GridTile displays ringing media", async () => {
   >("ringing");
   const vm = createRingingMedia({
     pickupState$,
-    muteStates: {
-      video: { enabled$: constant(false) },
-    } as unknown as MuteStates,
     id: "test",
+    intent: "audio",
     userId: "@alice:example.org",
     displayName$: constant("Alice"),
     mxcAvatarUrl$: constant(undefined),
@@ -109,6 +136,9 @@ test("GridTile displays ringing media", async () => {
         targetWidth={300}
         targetHeight={200}
         showSpeakingIndicators
+        showNameTags
+        showRingingStatus
+        showOutline
         focusable
       />
     </ReactionsSenderProvider>,

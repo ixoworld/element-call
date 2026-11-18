@@ -16,9 +16,8 @@ import {
   type Room,
   SyncState,
 } from "matrix-js-sdk";
-import { ConnectionState, type Room as LivekitRoom } from "livekit-client";
 
-import { E2eeType } from "../e2ee/e2eeType";
+import { E2eeType } from "@element-hq/matrixrtc-sdk";
 import {
   type CallViewModel,
   createCallViewModel$,
@@ -26,19 +25,26 @@ import {
 } from "../state/CallViewModel/CallViewModel";
 import {
   mockConfig,
-  mockLivekitRoom,
-  mockLocalParticipant,
   mockMatrixRoom,
+  mockRTCParticipation,
   mockMediaDevices,
   mockMuteStates,
   MockRTCSession,
+  mockRTCMember,
   testScope,
 } from "./test";
 import { type MediaDevices } from "../state/MediaDevices";
 import { aliceRtcMember, localRtcMember } from "./test-fixtures";
 import { type RaisedHandInfo, type ReactionInfo } from "../reactions";
-import { constant } from "../state/Behavior";
-import { MatrixRTCMode } from "../settings/settings";
+import { constant } from "@element-hq/matrixrtc-sdk";
+import { map } from "rxjs";
+import { createCallFooterViewModel } from "../components/CallFooterViewModel";
+import { createSentCallNotification$ } from "../state/CallViewModel/CallNotificationLifecycle";
+import { HeaderStyle } from "../UrlParams";
+import { type FooterSnapshot } from "../components/CallFooter";
+import { type ViewModel } from "../state/ViewModel";
+import { createDeveloperSettingsTabViewModel } from "../settings/DeveloperSettingsTabViewModel";
+import { type DeveloperSettingsSnapshot } from "../settings/DeveloperSettingsTab";
 
 mockConfig({ livekit: { livekit_service_url: "https://example.com" } });
 
@@ -63,7 +69,7 @@ export function getBasicRTCSession(
       getUserId: () => localRtcMember.userId,
       getDeviceId: () => localRtcMember.deviceId,
       getSyncState: () => SyncState.Syncing,
-      getDomain: () => null,
+      getDomain: () => "example.com",
       getAccessToken: () => "fake-token",
       sendEvent: vitest.fn().mockResolvedValue({ event_id: "$fake:event" }),
       redactEvent: vitest.fn().mockResolvedValue({ event_id: "$fake:event" }),
@@ -125,8 +131,8 @@ export function getBasicRTCSession(
 
 /**
  * Construct a basic CallViewModel to test components that make use of it.
- * @param members
- * @param initialRtcMemberships
+ * @param members - Room members to include in the call.
+ * @param initialRtcMemberships - RTC memberships to start with.
  * @returns
  */
 export function getBasicCallViewModelEnvironment(
@@ -136,6 +142,8 @@ export function getBasicCallViewModelEnvironment(
   callViewModelOptions: Partial<CallViewModelOptions> = {},
 ): {
   vm: CallViewModel;
+  footerVm: ViewModel<FooterSnapshot>;
+  developerSettingsVm: ViewModel<DeveloperSettingsSnapshot>;
   rtcMemberships$: BehaviorSubject<CallMembership[]>;
   rtcSession: MockRTCSession;
   handRaisedSubject$: BehaviorSubject<Record<string, RaisedHandInfo>>;
@@ -148,31 +156,74 @@ export function getBasicCallViewModelEnvironment(
   const handRaisedSubject$ = new BehaviorSubject({});
   const reactionsSubject$ = new BehaviorSubject({});
 
+  const scope = testScope();
+  const muteStates = mockMuteStates();
+  const mediaDevices = mediaDevicesOverride ?? mockMediaDevices({});
+  // Every membership is a member whose media has arrived
+  const rtcParticipation = mockRTCParticipation(scope, {
+    localMember$: scope.behavior(
+      rtcMemberships$.pipe(
+        map((memberships) =>
+          memberships.some((m) => m.userId === localRtcMember.userId)
+            ? mockRTCMember(true, {
+                membership: localRtcMember,
+                roomMember: members.find(
+                  (m) => m.userId === localRtcMember.userId,
+                ),
+                transportUrl: "https://example.com",
+                tracks$: constant([]),
+              })
+            : null,
+        ),
+      ),
+    ),
+    remoteMembers$: scope.behavior(
+      rtcMemberships$.pipe(
+        map((memberships) =>
+          memberships
+            .filter((m) => m.userId !== localRtcMember.userId)
+            .map((membership) =>
+              mockRTCMember(false, {
+                membership,
+                roomMember: members.find((m) => m.userId === membership.userId),
+                transportUrl: "https://example.com",
+                tracks$: constant([]),
+              }),
+            ),
+        ),
+      ),
+    ),
+  });
   const vm = createCallViewModel$(
-    testScope(),
-    rtcSession.asMockedSession(),
+    scope,
+    rtcParticipation,
     matrixRoom,
-    mediaDevicesOverride ?? mockMediaDevices({}),
-    mockMuteStates(),
+    mediaDevices,
+    muteStates,
     {
       encryptionSystem: { kind: E2eeType.PER_PARTICIPANT },
-      livekitRoomFactory: (): LivekitRoom =>
-        mockLivekitRoom({
-          localParticipant: mockLocalParticipant({ identity: "" }),
-          remoteParticipants: new Map(),
-          disconnect: async () => Promise.resolve(),
-          setE2EEEnabled: async () => Promise.resolve(),
-        }),
-      connectionState$: constant(ConnectionState.Connected),
-      matrixRTCMode$: constant(MatrixRTCMode.Legacy),
+      sentCallNotification$: createSentCallNotification$(
+        scope,
+        rtcSession.asMockedSession(),
+      ),
+      windowSize$: constant({ width: 1000, height: 800 }),
       ...callViewModelOptions,
     },
     handRaisedSubject$,
     reactionsSubject$,
-    constant({ processor: undefined, supported: false }),
+  );
+  const footerVm = createCallFooterViewModel(
+    testScope(),
+    vm,
+    muteStates,
+    mediaDevices,
+    "reactionId",
+    { showControls: true, header: HeaderStyle.Standard },
   );
   return {
     vm,
+    footerVm,
+    developerSettingsVm: createDeveloperSettingsTabViewModel(testScope(), vm),
     rtcMemberships$,
     rtcSession,
     handRaisedSubject$: handRaisedSubject$,

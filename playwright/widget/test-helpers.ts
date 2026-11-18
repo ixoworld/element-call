@@ -11,6 +11,7 @@ import {
   type JSHandle,
   type Page,
   type FrameLocator,
+  type Locator,
 } from "@playwright/test";
 import { type MatrixClient } from "matrix-js-sdk";
 
@@ -21,7 +22,7 @@ const PASSWORD = "foobarbaz1!";
 export const HOST1 = "https://app.m.localhost/#/welcome";
 export const HOST2 = "https://app.othersite.m.localhost/#/welcome";
 
-export type RtcMode = "legacy" | "compat" | "2_0";
+export type RtcMode = "compat" | "2_0";
 
 export class TestHelpers {
   public static async startCallInCurrentRoom(
@@ -54,16 +55,37 @@ export class TestHelpers {
       .click();
   }
 
+  public static async joinCallInCurrentDM(
+    page: Page,
+    audioOnly: boolean = false,
+  ): Promise<void> {
+    await this.joinCallInRoom(page, audioOnly, true);
+  }
+
   public static async joinCallInCurrentRoom(
     page: Page,
     audioOnly: boolean = false,
   ): Promise<void> {
-    // This is the header button that notifies about an ongoing call
-    const label = audioOnly ? "Voice call started" : "Video call started";
+    await this.joinCallInRoom(page, audioOnly, false);
+  }
+
+  public static async joinCallInRoom(
+    page: Page,
+    audioOnly: boolean = false,
+    isDM: boolean = false,
+  ): Promise<void> {
+    await page.waitForTimeout(3000);
+    const label = isDM
+      ? audioOnly
+        ? "Incoming voice call"
+        : "Incoming video call"
+      : "Group call started";
     await expect(page.getByText(label)).toBeVisible({
       timeout: 10000,
     });
-    await page.getByRole("button", { name: "Join" }).click({
+    // XXX This using the notification toast to join the room.
+    // Not the buttons in the header or timeline
+    await page.getByRole("alert").getByRole("button", { name: "Join" }).click({
       timeout: 5000,
     });
   }
@@ -120,9 +142,7 @@ export class TestHelpers {
       timeout: 15000,
     });
 
-    await this.maybeDismissBrowserNotSupportedToast(page);
-    await this.maybeDismissServiceWorkerWarningToast(page);
-    await this.maybeDismissBackupChat(page);
+    await this.dismissStartupToasts(page);
 
     await TestHelpers.setDevToolElementCallDevUrl(page);
 
@@ -133,73 +153,68 @@ export class TestHelpers {
     return { page, clientHandle, mxId };
   }
 
-  private static async maybeDismissBrowserNotSupportedToast(
-    page: Page,
-  ): Promise<void> {
-    const browserUnsupportedToast = page
-      .getByText("Element does not support this browser")
-      .locator("..")
-      .locator("..");
+  // Dismisses any toasts that appear on startup, such as "Failed to load service worker" or "Back up your chats".
+  // Toast can be stacked, and only the top one can be dismiss, so just look at what is on top and
+  // dismiss (if part of expected toats)
+  public static async dismissStartupToasts(page: Page): Promise<void> {
+    const expectedToasts = [
+      { title: "Failed to load service worker", button: "OK" },
+      { title: "Back up your chats", button: "Not now" },
+      { title: "Turn on key storage", button: "Dismiss" },
+      { title: "Element does not support this browser", button: "Dismiss" },
+    ];
 
-    // Dismiss incompatible browser toast
-    const dismissButton = browserUnsupportedToast.getByRole("button", {
-      name: "Dismiss",
-    });
-    try {
-      await expect(dismissButton).toBeVisible({ timeout: 700 });
-      await dismissButton.click();
-    } catch {
-      // dismissButton not visible, continue as normal
+    const toast = page.locator(".mx_Toast_toast");
+
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      try {
+        await toast.waitFor({ state: "visible", timeout: 700 });
+        const title = await toast.locator(".mx_Toast_title h2").textContent();
+
+        // Find the matching toast config
+        const toastConfig = expectedToasts.find((t) =>
+          title?.includes(t.title),
+        );
+
+        if (toastConfig) {
+          // Bounded so that a renamed button leaves the toast in place and the
+          // next step reports it, instead of hanging until the test timeout.
+          await toast
+            .getByRole("button", { name: toastConfig.button })
+            .click({ timeout: 5000 });
+        } else {
+          // Unknown toast. We don't want to act on unknown toasts
+          break;
+        }
+      } catch {
+        // No toast visible, exit loop
+        break;
+      }
     }
   }
 
-  private static async maybeDismissServiceWorkerWarningToast(
+  public static async closeReleaseAnnouncement(
     page: Page,
+    name: string,
   ): Promise<void> {
-    const toast = page
-      .locator(".mx_Toast_toast")
-      .getByText("Failed to load service worker");
-
     try {
-      await expect(toast).toBeVisible({ timeout: 700 });
       await page
-        .locator(".mx_Toast_toast")
+        .getByRole("dialog", { name })
         .getByRole("button", { name: "OK" })
-        .click();
+        .click({ timeout: 2000 });
     } catch {
-      // toast not visible, continue as normal
+      // Announcement not shown; nothing to do
     }
   }
 
-  private static async maybeDismissBackupChat(page: Page): Promise<void> {
-    const toast = page
-      .locator(".mx_Toast_toast")
-      .getByText("Back up your chats");
-
+  public static async expandAllSections(page: Page): Promise<void> {
     try {
-      await expect(toast).toBeVisible({ timeout: 700 });
       await page
-        .locator(".mx_Toast_toast")
-        .getByRole("button", { name: "Dismiss" })
-        .click();
+        .getByRole("button", { name: "Expand all sections" })
+        .click({ timeout: 2000 });
     } catch {
-      // toast not visible, continue as normal
-    }
-  }
-
-  public static async maybeDismissKeyBackupToast(page: Page): Promise<void> {
-    const toast = page
-      .locator(".mx_Toast_toast")
-      .getByText("Back up your chats");
-
-    try {
-      await expect(toast).toBeVisible({ timeout: 700 });
-      await page
-        .locator(".mx_Toast_toast")
-        .getByRole("button", { name: "Dismiss" })
-        .click();
-    } catch {
-      // toast not visible, continue as normal
+      // Already expanded or button not present
     }
   }
 
@@ -208,9 +223,11 @@ export class TestHelpers {
     page: Page,
     andInvite: string[] = [],
   ): Promise<void> {
+    await TestHelpers.closeReleaseAnnouncement(page, "Introducing Sections");
+
     await page
       .getByRole("navigation", { name: "Room list" })
-      .getByRole("button", { name: "New conversation" })
+      .getByRole("button", { name: "New", exact: true })
       .click();
 
     await page.getByRole("menuitem", { name: "New Room" }).click({
@@ -222,7 +239,7 @@ export class TestHelpers {
       timeout: 10000,
     });
     await expect(page.getByText("Encryption enabled")).toBeVisible();
-    await TestHelpers.maybeDismissKeyBackupToast(page);
+    await TestHelpers.dismissStartupToasts(page);
 
     // Invite users if any
     if (andInvite.length > 0) {
@@ -251,9 +268,9 @@ export class TestHelpers {
     roomName: string,
     page: Page,
   ): Promise<void> {
-    await page.getByRole("option", { name: roomName }).click({
-      timeout: 10000,
-    });
+    await TestHelpers.closeReleaseAnnouncement(page, "Introducing Sections");
+    await TestHelpers.expandAllSections(page);
+    await TestHelpers.roomListItem(page, roomName).click({ timeout: 10000 });
     await page.getByRole("button", { name: "Accept" }).click({
       timeout: 5000,
     });
@@ -261,7 +278,7 @@ export class TestHelpers {
     await expect(
       page.getByRole("main").getByRole("heading", { name: roomName }),
     ).toBeVisible();
-    await TestHelpers.maybeDismissKeyBackupToast(page);
+    await TestHelpers.dismissStartupToasts(page);
   }
 
   /**
@@ -307,9 +324,7 @@ export class TestHelpers {
 
     // Move to Developer tab now
     await iframe.getByRole("tab", { name: "Developer" }).click();
-    if (mode == "legacy") {
-      await iframe.getByText("Legacy: state events").click();
-    } else if (mode == "2_0") {
+    if (mode == "2_0") {
       await iframe.getByText("Matrix 2.0").click();
     } else {
       // compat
@@ -344,6 +359,23 @@ export class TestHelpers {
     }
   }
 
+  public static async expandRoomList(page: Page): Promise<void> {
+    await page
+      .getByRole("separator", { name: "Click or drag to expand" })
+      .click();
+  }
+
+  /**
+   * Locates a room in the room list by its name.
+   *
+   * Matches on the aria-label prefix because the item's role differs between
+   * the flat room list (`option`) and the sectioned room list (`button`), and
+   * the label may carry a suffix such as " invitation.".
+   */
+  public static roomListItem(page: Page, roomName: string): Locator {
+    return page.locator(`[aria-label^="Open room ${roomName}"]`);
+  }
+
   /**
    * Switches to a room in the room list by its name.
    * @param page - The EW page
@@ -353,7 +385,8 @@ export class TestHelpers {
     page: Page,
     roomName: string,
   ): Promise<void> {
-    await page.getByRole("option", { name: `Open room ${roomName}` }).click();
+    await TestHelpers.expandAllSections(page);
+    await TestHelpers.roomListItem(page, roomName).click();
   }
 
   public static async dismissInviteUnknownUserModal(page: Page): Promise<void> {
@@ -382,25 +415,9 @@ export class TestHelpers {
     frame: FrameLocator,
     count: number,
   ): Promise<void> {
-    // XXX we need to be better at our HTML markup and accessibility, it would make
-    // this kind of stuff way easier to test if we could look out for aria attributes.
-    await expect
-      .poll(
-        async () => {
-          return await frame
-            .locator("video")
-            .evaluateAll(
-              (videos: Element[]) =>
-                videos.filter(
-                  (v: Element) =>
-                    window.getComputedStyle(v).display === "block",
-                ).length,
-            );
-        },
-        {
-          timeout: 10000,
-        },
-      )
-      .toBe(count);
+    await expect(frame.locator("video").filter({ visible: true })).toHaveCount(
+      count,
+      { timeout: 10000 },
+    );
   }
 }

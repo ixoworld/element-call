@@ -14,12 +14,10 @@ import { BehaviorSubject } from "rxjs";
 
 import { SpotlightTile } from "./SpotlightTile";
 import {
-  mockLocalParticipant,
   mockMediaDevices,
   mockRtcMembership,
   mockLocalMedia,
   mockRemoteMedia,
-  mockRemoteParticipant,
   mockRemoteScreenShare,
 } from "../utils/test";
 import { SpotlightTileViewModel } from "../state/TileViewModel";
@@ -28,11 +26,11 @@ import {
   createRingingMedia,
   type RingingMediaViewModel,
 } from "../state/media/RingingMediaViewModel";
-import { type MuteStates } from "../state/MuteStates";
 
 global.IntersectionObserver = class MockIntersectionObserver {
   public observe(): void {}
   public unobserve(): void {}
+  public disconnect(): void {}
 } as unknown as typeof IntersectionObserver;
 
 test("SpotlightTile is accessible", async () => {
@@ -42,7 +40,7 @@ test("SpotlightTile is accessible", async () => {
       rawDisplayName: "Alice",
       getMxcAvatarUrl: () => "mxc://adfsg",
     },
-    mockRemoteParticipant({}),
+    [],
   );
 
   const vm2 = mockLocalMedia(
@@ -51,7 +49,7 @@ test("SpotlightTile is accessible", async () => {
       rawDisplayName: "Bob",
       getMxcAvatarUrl: () => "mxc://dlskf",
     },
-    mockLocalParticipant({}),
+    [],
     mockMediaDevices({}),
   );
 
@@ -59,12 +57,20 @@ test("SpotlightTile is accessible", async () => {
   const toggleExpanded = vi.fn();
   const { container } = render(
     <SpotlightTile
-      vm={new SpotlightTileViewModel(constant([vm1, vm2]), constant(false))}
+      vm={
+        new SpotlightTileViewModel(
+          constant([vm1, vm2]),
+          constant(false),
+          constant("solid"),
+        )
+      }
       targetWidth={300}
       targetHeight={200}
       expanded={false}
       onToggleExpanded={toggleExpanded}
       showIndicators
+      showNameTags
+      showRingingStatus
       focusable={true}
     />,
   );
@@ -91,7 +97,7 @@ test("Screen share volume UI is shown when screen share has audio", async () => 
   const vm = mockRemoteScreenShare(
     mockRtcMembership("@alice:example.org", "AAAA"),
     {},
-    mockRemoteParticipant({}),
+    [],
   );
 
   vi.spyOn(vm, "audioEnabled$", "get").mockReturnValue(constant(true));
@@ -100,12 +106,20 @@ test("Screen share volume UI is shown when screen share has audio", async () => 
   const { container } = render(
     <TooltipProvider>
       <SpotlightTile
-        vm={new SpotlightTileViewModel(constant([vm]), constant(false))}
+        vm={
+          new SpotlightTileViewModel(
+            constant([vm]),
+            constant(false),
+            constant("solid"),
+          )
+        }
         targetWidth={300}
         targetHeight={200}
         expanded={false}
         onToggleExpanded={toggleExpanded}
         showIndicators
+        showNameTags
+        showRingingStatus
         focusable
       />
     </TooltipProvider>,
@@ -121,7 +135,7 @@ test("Screen share volume UI is hidden when screen share has no audio", async ()
   const vm = mockRemoteScreenShare(
     mockRtcMembership("@alice:example.org", "AAAA"),
     {},
-    mockRemoteParticipant({}),
+    [],
   );
 
   vi.spyOn(vm, "audioEnabled$", "get").mockReturnValue(constant(false));
@@ -129,12 +143,20 @@ test("Screen share volume UI is hidden when screen share has no audio", async ()
   const toggleExpanded = vi.fn();
   const { container } = render(
     <SpotlightTile
-      vm={new SpotlightTileViewModel(constant([vm]), constant(false))}
+      vm={
+        new SpotlightTileViewModel(
+          constant([vm]),
+          constant(false),
+          constant("solid"),
+        )
+      }
       targetWidth={300}
       targetHeight={200}
       expanded={false}
       onToggleExpanded={toggleExpanded}
       showIndicators
+      showNameTags
+      showRingingStatus
       focusable
     />,
   );
@@ -153,10 +175,8 @@ test("SpotlightTile displays ringing media", async () => {
   >("ringing");
   const vm = createRingingMedia({
     pickupState$,
-    muteStates: {
-      video: { enabled$: constant(false) },
-    } as unknown as MuteStates,
     id: "test",
+    intent: "audio",
     userId: "@alice:example.org",
     displayName$: constant("Alice"),
     mxcAvatarUrl$: constant(undefined),
@@ -165,12 +185,20 @@ test("SpotlightTile displays ringing media", async () => {
   const toggleExpanded = vi.fn();
   const { container } = render(
     <SpotlightTile
-      vm={new SpotlightTileViewModel(constant([vm]), constant(false))}
+      vm={
+        new SpotlightTileViewModel(
+          constant([vm]),
+          constant(false),
+          constant("solid"),
+        )
+      }
       targetWidth={300}
       targetHeight={200}
       expanded={false}
       onToggleExpanded={toggleExpanded}
       showIndicators
+      showNameTags
+      showRingingStatus
       focusable={true}
     />,
   );

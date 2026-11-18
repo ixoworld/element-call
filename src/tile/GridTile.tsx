@@ -11,9 +11,9 @@ import {
   type ReactNode,
   type Ref,
   useCallback,
-  useEffect,
   useRef,
   useState,
+  useMemo,
 } from "react";
 import { type animated } from "@react-spring/web";
 import classNames from "classnames";
@@ -29,17 +29,14 @@ import {
   UserProfileIcon,
   VolumeOffSolidIcon,
   SwitchCameraSolidIcon,
-  VideoCallSolidIcon,
-  VoiceCallSolidIcon,
-  EndCallIcon,
 } from "@vector-im/compound-design-tokens/assets/web/icons";
 import {
   ContextMenu,
   MenuItem,
   ToggleMenuItem,
   Menu,
+  Text,
 } from "@vector-im/compound-web";
-import { useObservableEagerState } from "observable-hooks";
 
 import styles from "./GridTile.module.css";
 import { Slider } from "../Slider";
@@ -53,6 +50,8 @@ import { type LocalUserMediaViewModel } from "../state/media/LocalUserMediaViewM
 import { type RemoteUserMediaViewModel } from "../state/media/RemoteUserMediaViewModel";
 import { type UserMediaViewModel } from "../state/media/UserMediaViewModel";
 import { type RingingMediaViewModel } from "../state/media/RingingMediaViewModel";
+import { RingingStatus } from "./RingingStatus";
+import { type Transport } from "matrix-js-sdk/lib/matrixrtc";
 
 interface TileProps {
   ref?: Ref<HTMLDivElement>;
@@ -62,22 +61,21 @@ interface TileProps {
   targetHeight: number;
   displayName: string;
   mxcAvatarUrl: string | undefined;
+  showNameTags: boolean;
   focusable: boolean;
 }
 
 interface RingingMediaTileProps extends TileProps {
   vm: RingingMediaViewModel;
+  showStatus: boolean;
 }
 
 const RingingMediaTile: FC<RingingMediaTileProps> = ({
   vm,
+  showStatus,
   className,
   ...props
 }) => {
-  const { t } = useTranslation();
-  const pickupState = useBehavior(vm.pickupState$);
-  const videoEnabled = useBehavior(vm.videoEnabled$);
-
   return (
     <MediaView
       className={classNames(className, styles.tile)}
@@ -85,15 +83,14 @@ const RingingMediaTile: FC<RingingMediaTileProps> = ({
       userId={vm.userId}
       unencryptedWarning={false}
       status={
-        pickupState === "ringing"
-          ? {
-              text: t("video_tile.calling"),
-              Icon: videoEnabled ? VideoCallSolidIcon : VoiceCallSolidIcon,
-            }
-          : { text: t("video_tile.call_ended"), Icon: EndCallIcon }
+        showStatus && (
+          <Text as="span" size="sm" weight="medium">
+            <RingingStatus vm={vm} />
+          </Text>
+        )
       }
-      videoEnabled={videoEnabled}
-      videoFit="cover"
+      avatarStyle="translucent"
+      videoEnabled={false}
       mirror={false}
       {...props}
     />
@@ -107,22 +104,24 @@ interface UserMediaTileProps extends TileProps {
   playbackMuted: boolean;
   waitingForMedia?: boolean;
   primaryButton?: ReactNode;
-  menuStart?: ReactNode;
-  menuEnd?: ReactNode;
-  focusUrl: string | undefined;
+  transport: Transport | undefined;
 }
 
-const UserMediaTile: FC<UserMediaTileProps> = ({
+/**
+ * A user media tile without a context menu.
+ */
+// The context menu is kept separate from this component for performance
+// reasons (c.f. UserMediaTile)
+const UserMediaTileInner: FC<UserMediaTileProps & { menu: ReactNode }> = ({
   ref,
   vm,
   showSpeakingIndicators,
   playbackMuted,
   waitingForMedia,
   primaryButton,
-  menuStart,
-  menuEnd,
+  menu,
   className,
-  focusUrl,
+  transport,
   displayName,
   mxcAvatarUrl,
   focusable,
@@ -134,27 +133,15 @@ const UserMediaTile: FC<UserMediaTileProps> = ({
   const { t } = useTranslation();
   const video = useBehavior(vm.video$);
   const unencryptedWarning = useBehavior(vm.unencryptedWarning$);
-  const audioStreamStats = useObservableEagerState<
-    RTCInboundRtpStreamStats | RTCOutboundRtpStreamStats | undefined
-  >(vm.audioStreamStats$);
-  const videoStreamStats = useObservableEagerState<
-    RTCInboundRtpStreamStats | RTCOutboundRtpStreamStats | undefined
-  >(vm.videoStreamStats$);
+  const audioStreamStats = useBehavior(vm.audioStreamStats$);
+  const videoStreamStats = useBehavior(vm.videoStreamStats$);
   const audioEnabled = useBehavior(vm.audioEnabled$);
   const videoEnabled = useBehavior(vm.videoEnabled$);
   const speaking = useBehavior(vm.speaking$);
-  const videoFit = useBehavior(vm.videoFit$);
 
   const rtcBackendIdentity = vm.rtcBackendIdentity;
   const handRaised = useBehavior(vm.handRaised$);
   const reaction = useBehavior(vm.reaction$);
-
-  // Whenever bounds change, inform the viewModel
-  useEffect(() => {
-    if (targetWidth > 0 && targetHeight > 0) {
-      vm.setTargetDimensions(targetWidth, targetHeight);
-    }
-  }, [targetWidth, targetHeight, vm]);
 
   const AudioIcon = playbackMuted
     ? VolumeOffSolidIcon
@@ -168,31 +155,32 @@ const UserMediaTile: FC<UserMediaTileProps> = ({
       : t("microphone_off");
 
   const [menuOpen, setMenuOpen] = useState(false);
-  const menu = (
-    <>
-      {menuStart}
-      {/*
-       No additional menu item (used to be the manual fit to frame.
-       Placeholder for future menu items that should be placed here.
-       */}
-      {menuEnd}
-    </>
+  const menuTrigger = useMemo(
+    () => (
+      <button
+        aria-label={t("common.options")}
+        tabIndex={focusable ? undefined : -1}
+      >
+        <OverflowHorizontalIcon aria-hidden width={20} height={20} />
+      </button>
+    ),
+    [t, focusable],
   );
 
-  const raisedHandOnClick = vm.local
-    ? (): void => void toggleRaisedHand()
-    : undefined;
+  const raisedHandOnClick = useMemo(
+    () => (vm.local ? (): void => void toggleRaisedHand() : undefined),
+    [vm.local, toggleRaisedHand],
+  );
 
   const showSpeaking = showSpeakingIndicators && speaking;
 
-  const tile = (
+  return (
     <MediaView
       ref={ref}
       video={video}
       userId={vm.userId}
       unencryptedWarning={unencryptedWarning}
       videoEnabled={videoEnabled}
-      videoFit={videoFit}
       className={classNames(className, styles.tile, {
         [styles.speaking]: showSpeaking,
         [styles.handRaised]: !showSpeaking && handRaised,
@@ -215,14 +203,7 @@ const UserMediaTile: FC<UserMediaTileProps> = ({
             open={menuOpen}
             onOpenChange={setMenuOpen}
             title={displayName}
-            trigger={
-              <button
-                aria-label={t("common.options")}
-                tabIndex={focusable ? undefined : -1}
-              >
-                <OverflowHorizontalIcon aria-hidden width={20} height={20} />
-              </button>
-            }
+            trigger={menuTrigger}
             side="left"
             align="start"
           >
@@ -234,7 +215,8 @@ const UserMediaTile: FC<UserMediaTileProps> = ({
       currentReaction={reaction ?? undefined}
       raisedHandOnClick={raisedHandOnClick}
       waitingForMedia={waitingForMedia}
-      focusUrl={focusUrl}
+      transport={transport}
+      setVideoAspectRatio={vm.setVideoAspectRatio}
       audioStreamStats={audioStreamStats}
       videoStreamStats={videoStreamStats}
       rtcBackendIdentity={rtcBackendIdentity}
@@ -243,9 +225,37 @@ const UserMediaTile: FC<UserMediaTileProps> = ({
       {...props}
     />
   );
+};
 
+/**
+ * A user media tile enhanced with a context menu.
+ */
+const UserMediaTile: FC<
+  UserMediaTileProps & { menuStart?: ReactNode; menuEnd?: ReactNode }
+> = ({ menuStart, menuEnd, ...props }) => {
+  const menu = useMemo(
+    () => (
+      <>
+        {menuStart}
+        {/*
+       No additional menu item (used to be the manual fit to frame.
+       Placeholder for future menu items that should be placed here.
+       */}
+        {menuEnd}
+      </>
+    ),
+    [menuStart, menuEnd],
+  );
+
+  // ContextMenu is expensive to render, so we avoid subscribing to any
+  // frequently-changing behaviors here and instead keep them isolated in the
+  // UserMediaTileInner component
   return (
-    <ContextMenu title={displayName} trigger={tile} hasAccessibleAlternative>
+    <ContextMenu
+      title={props.displayName}
+      trigger={<UserMediaTileInner {...props} menu={menu} />}
+      hasAccessibleAlternative
+    >
       {menu}
     </ContextMenu>
   );
@@ -270,7 +280,7 @@ const LocalUserMediaTile: FC<LocalUserMediaTileProps> = ({
   const mirror = useBehavior(vm.mirror$);
   const alwaysShow = useBehavior(vm.alwaysShow$);
   const switchCamera = useBehavior(vm.switchCamera$);
-  const focusUrl = useBehavior(vm.focusUrl$);
+  const transport = useBehavior(vm.transport$);
 
   const latestAlwaysShow = useLatest(alwaysShow);
   const onSelectAlwaysShow = useCallback(
@@ -279,6 +289,29 @@ const LocalUserMediaTile: FC<LocalUserMediaTileProps> = ({
       vm.setAlwaysShow(!latestAlwaysShow.current);
     },
     [vm, latestAlwaysShow],
+  );
+
+  const menuStart = useMemo(
+    () => (
+      <ToggleMenuItem
+        Icon={VisibilityOnIcon}
+        label={t("video_tile.always_show")}
+        checked={alwaysShow}
+        onSelect={onSelectAlwaysShow}
+      />
+    ),
+    [t, alwaysShow, onSelectAlwaysShow],
+  );
+  const menuEnd = useMemo(
+    () =>
+      onOpenProfile && (
+        <MenuItem
+          Icon={UserProfileIcon}
+          label={t("common.profile")}
+          onSelect={onOpenProfile}
+        />
+      ),
+    [t, onOpenProfile],
   );
 
   return (
@@ -299,25 +332,10 @@ const LocalUserMediaTile: FC<LocalUserMediaTileProps> = ({
           </button>
         )
       }
-      menuStart={
-        <ToggleMenuItem
-          Icon={VisibilityOnIcon}
-          label={t("video_tile.always_show")}
-          checked={alwaysShow}
-          onSelect={onSelectAlwaysShow}
-        />
-      }
-      menuEnd={
-        onOpenProfile && (
-          <MenuItem
-            Icon={UserProfileIcon}
-            label={t("common.profile")}
-            onSelect={onOpenProfile}
-          />
-        )
-      }
+      menuStart={menuStart}
+      menuEnd={menuEnd}
       focusable={focusable}
-      focusUrl={focusUrl}
+      transport={transport}
       {...props}
     />
   );
@@ -339,7 +357,7 @@ const RemoteUserMediaTile: FC<RemoteUserMediaTileProps> = ({
   const waitingForMedia = useBehavior(vm.waitingForMedia$);
   const playbackMuted = useBehavior(vm.playbackMuted$);
   const playbackVolume = useBehavior(vm.playbackVolume$);
-  const focusUrl = useBehavior(vm.focusUrl$);
+  const transport = useBehavior(vm.transport$);
 
   const onSelectMute = useCallback(
     (e: Event) => {
@@ -381,7 +399,7 @@ const RemoteUserMediaTile: FC<RemoteUserMediaTileProps> = ({
           </MenuItem>
         </>
       }
-      focusUrl={focusUrl}
+      transport={transport}
       {...props}
     />
   );
@@ -398,6 +416,9 @@ interface GridTileProps {
   className?: string;
   style?: ComponentProps<typeof animated.div>["style"];
   showSpeakingIndicators: boolean;
+  showNameTags: boolean;
+  showRingingStatus: boolean;
+  showOutline: boolean;
   focusable: boolean;
 }
 
@@ -405,7 +426,10 @@ export const GridTile: FC<GridTileProps> = ({
   ref: theirRef,
   vm,
   showSpeakingIndicators,
+  showRingingStatus,
+  showOutline,
   onOpenProfile,
+  className,
   ...props
 }) => {
   const ourRef = useRef<HTMLDivElement | null>(null);
@@ -419,9 +443,11 @@ export const GridTile: FC<GridTileProps> = ({
       <RingingMediaTile
         ref={ref}
         vm={media}
-        {...props}
         displayName={displayName}
         mxcAvatarUrl={mxcAvatarUrl}
+        showStatus={showRingingStatus}
+        className={classNames(className, { [styles.outline]: showOutline })}
+        {...props}
       />
     );
   } else if (media.local) {
@@ -433,6 +459,7 @@ export const GridTile: FC<GridTileProps> = ({
         onOpenProfile={onOpenProfile}
         displayName={displayName}
         mxcAvatarUrl={mxcAvatarUrl}
+        className={classNames(className, { [styles.outline]: showOutline })}
         {...props}
       />
     );
@@ -444,6 +471,7 @@ export const GridTile: FC<GridTileProps> = ({
         showSpeakingIndicators={showSpeakingIndicators}
         displayName={displayName}
         mxcAvatarUrl={mxcAvatarUrl}
+        className={classNames(className, { [styles.outline]: showOutline })}
         {...props}
       />
     );

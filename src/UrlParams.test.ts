@@ -11,16 +11,23 @@ import { logger } from "matrix-js-sdk/lib/logger";
 
 import * as PlatformMod from "../src/Platform";
 import {
+  BackgroundStyle,
+  configurationForIntent,
   getRoomIdentifierFromUrl,
   computeUrlParams,
   HeaderStyle,
   getUrlParams,
+  componentProperties,
+  UserIntent,
 } from "../src/UrlParams";
+import { mockConfig } from "./utils/test";
 
 const ROOM_NAME = "roomNameHere";
 const ROOM_ID = "!d45f138fsd";
 const ORIGIN = "https://call.element.io";
 const HOMESERVER = "localhost";
+
+mockConfig();
 
 describe("UrlParams", () => {
   describe("handles URL with /room/", () => {
@@ -223,7 +230,6 @@ describe("UrlParams", () => {
       showControls: true,
       hideScreensharing: false,
       allowIceFallback: false,
-      perParticipantE2EE: false,
       controlledAudioDevices: false,
       skipLobby: false,
       returnToLobby: false,
@@ -236,7 +242,6 @@ describe("UrlParams", () => {
       showControls: true,
       hideScreensharing: false,
       allowIceFallback: true,
-      perParticipantE2EE: true,
       controlledAudioDevices: platform === "desktop" ? false : true,
       skipLobby: true,
       returnToLobby: false,
@@ -249,7 +254,6 @@ describe("UrlParams", () => {
       showControls: true,
       hideScreensharing: false,
       allowIceFallback: true,
-      perParticipantE2EE: true,
       controlledAudioDevices: platform === "desktop" ? false : true,
       skipLobby: false,
       returnToLobby: false,
@@ -329,6 +333,50 @@ describe("UrlParams", () => {
         ),
       ).toMatchObject({
         ...joinExistingCallDefaults("desktop"),
+        callIntent: "audio",
+      });
+    });
+
+    it("accepts start_call_dm_voice", () => {
+      expect(
+        computeUrlParams(
+          "?intent=start_call_dm_voice&widgetId=1234&parentUrl=parent.org",
+        ),
+      ).toMatchObject({
+        ...startNewCallDefaults("desktop"),
+        // A DM rings the other side and waits for them, whichever platform
+        sendNotificationType: "ring",
+        autoLeaveWhenOthersLeft: true,
+        waitForCallPickup: true,
+        callIntent: "audio",
+      });
+    });
+
+    it("accepts join_existing_dm", () => {
+      expect(
+        computeUrlParams(
+          "?intent=join_existing_dm&widgetId=1234&parentUrl=parent.org",
+        ),
+      ).toMatchObject({
+        ...joinExistingCallDefaults("desktop"),
+        // Straight in: the other side is already waiting
+        skipLobby: true,
+        autoLeaveWhenOthersLeft: true,
+        waitForCallPickup: false,
+        callIntent: "video",
+      });
+    });
+
+    it("accepts join_existing_dm_voice", () => {
+      expect(
+        computeUrlParams(
+          "?intent=join_existing_dm_voice&widgetId=1234&parentUrl=parent.org",
+        ),
+      ).toMatchObject({
+        ...joinExistingCallDefaults("desktop"),
+        skipLobby: true,
+        autoLeaveWhenOthersLeft: true,
+        waitForCallPickup: false,
         callIntent: "audio",
       });
     });
@@ -419,6 +467,48 @@ describe("UrlParams", () => {
         "configuration:",
         expect.any(Object),
       );
+    });
+  });
+
+  // What Element Call runs with when a host embeds it as a component, which
+  // has no URL of its own for any of this to come from
+  describe("hosted defaults", () => {
+    it("assume nothing about a session or a page", () => {
+      expect(componentProperties).toMatchObject({
+        // The host is not a widget host, and supplies the client itself, so
+        // none of the widget or session plumbing applies
+        isWidget: false,
+        widgetId: null,
+        parentUrl: null,
+        userId: null,
+        deviceId: null,
+        baseUrl: null,
+        homeserver: null,
+        // The gradient is drawn by a `position: fixed` pseudo-element, which
+        // would escape the container and cover the host's own interface
+        background: BackgroundStyle.Solid,
+      });
+    });
+
+    it("keep a hosted call inside its room", () => {
+      const hosted = configurationForIntent(UserIntent.JoinExistingCall);
+      expect(hosted).toMatchObject({
+        // A host owns navigation, so Element Call must not offer a way out of
+        // the room
+        confineToRoom: true,
+        // The lobby first, so that the user picks their devices rather than
+        // being thrown into the call by the act of being rendered
+        skipLobby: false,
+      });
+      // No Element Call branding inside someone else's application
+      expect(hosted.header).not.toBe(HeaderStyle.Standard);
+    });
+
+    it("fall back to the standalone app's when no intent is stated", () => {
+      expect(configurationForIntent(UserIntent.Unknown)).toMatchObject({
+        confineToRoom: false,
+        header: HeaderStyle.Standard,
+      });
     });
   });
 });
