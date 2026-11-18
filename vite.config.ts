@@ -7,7 +7,7 @@ Please see LICENSE in the repository root for full details.
 
 import {
   loadEnv,
-  PluginOption,
+  type PluginOption,
   searchForWorkspaceRoot,
   type ConfigEnv,
   type UserConfig,
@@ -19,24 +19,28 @@ import { codecovVitePlugin } from "@codecov/vite-plugin";
 import { sentryVitePlugin } from "@sentry/vite-plugin";
 import { nodePolyfills } from "vite-plugin-node-polyfills";
 import wasm from "vite-plugin-wasm";
-
-import react from "@vitejs/plugin-react";
+import babel from "@rolldown/plugin-babel";
+import react, { reactCompilerPreset } from "@vitejs/plugin-react";
 import { realpathSync } from "fs";
 import * as fs from "node:fs";
+import { fileURLToPath } from "node:url";
 
-// https://vitejs.dev/config/
-// Modified type helper from defineConfig to allow for packageType (see defineConfig from vite)
-export default ({
+export const vitePluginsConfig = ({
   mode,
-  packageType,
-}: ConfigEnv & { packageType?: "full" | "embedded" }): UserConfig => {
+  html = true,
+}: Pick<ConfigEnv, "mode"> & {
+  /**
+   * Whether to inject Element Call's entry point into the HTML page. Builds
+   * that produce a library, or serve a page of their own, must not have this:
+   * it would pull the standalone app in alongside whatever they are building.
+   */
+  html?: boolean;
+}): UserConfig => {
   const env = loadEnv(mode, process.cwd());
-  // Environment variables with the VITE_ prefix are accessible at runtime.
-  // So, we set this to allow for build/package specific behavior.
-  // In future we might be able to do what is needed via code splitting at
-  // build time.
-  process.env.VITE_PACKAGE = packageType ?? "full";
   const plugins: PluginOption[] = [
+    babel({
+      presets: [reactCompilerPreset()],
+    }),
     react(),
     wasm(),
     nodePolyfills({
@@ -72,7 +76,7 @@ export default ({
     );
   }
 
-  if (!process.env.STORYBOOK) {
+  if (html && !process.env.STORYBOOK && !process.env.VITEST) {
     plugins.push(
       createHtmlPlugin({
         entry: "src/main.tsx",
@@ -85,6 +89,31 @@ export default ({
       }),
     );
   }
+
+  return {
+    plugins,
+    resolve: {
+      alias: {
+        // The SDK by its package name, resolved to its source, for every
+        // config built on this one: see the matching entry in tsconfig.json
+        "@element-hq/matrixrtc-sdk": fileURLToPath(
+          new URL("./sdk/index.ts", import.meta.url),
+        ),
+      },
+    },
+  };
+};
+// https://vitejs.dev/config/
+// Modified type helper from defineConfig to allow for packageType (see defineConfig from vite)
+export default ({
+  mode,
+  packageType,
+}: ConfigEnv & { packageType?: "full" | "embedded" }): UserConfig => {
+  // Environment variables with the VITE_ prefix are accessible at runtime.
+  // So, we set this to allow for build/package specific behavior.
+  // In future we might be able to do what is needed via code splitting at
+  // build time.
+  process.env.VITE_PACKAGE = packageType ?? "full";
 
   // The crypto WASM module is imported dynamically. Since it's common
   // for developers to use a linked copy of matrix-js-sdk or Rust
@@ -102,7 +131,9 @@ export default ({
   console.log("Allowed vite paths:", allow);
 
   return {
+    ...vitePluginsConfig({ mode }),
     server: {
+      host: true,
       port: 3000,
       fs: { allow },
       https: {
@@ -136,13 +167,15 @@ export default ({
         },
       },
     },
-    plugins,
     resolve: {
       alias: {
         // matrix-widget-api has its transpiled lib/index.js as its entry point,
         // which Vite for some reason refuses to work with, so we point it to
         // src/index.ts instead
         "matrix-widget-api": "matrix-widget-api/src/index.ts",
+        "@element-hq/matrixrtc-sdk": fileURLToPath(
+          new URL("./sdk/index.ts", import.meta.url),
+        ),
       },
       dedupe: [
         "react",

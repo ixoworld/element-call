@@ -24,8 +24,7 @@ import {
   type LocalVideoTrack,
   Track,
 } from "livekit-client";
-import { useObservableEagerState } from "observable-hooks";
-import { useNavigate } from "react-router-dom";
+import { convertToLivekitProcessor } from "@element-hq/matrixrtc-sdk";
 
 import inCallStyles from "./InCallView.module.css";
 import styles from "./LobbyView.module.css";
@@ -34,19 +33,24 @@ import { type MatrixInfo, VideoPreview } from "./VideoPreview";
 import { type MuteStates } from "../state/MuteStates";
 import { InviteButton } from "../button/InviteButton";
 import { SettingsModal, defaultSettingsTab } from "../settings/SettingsModal";
-import { useMediaQuery } from "../useMediaQuery";
+import { useRootSizeMatches } from "../useRootSize";
 import { E2eeType } from "../e2ee/e2eeType";
-import { Link } from "../button/Link";
+import { LeaveToHomeLink } from "../button/LeaveToHomeLink";
+import { useLeaveToHome } from "../LeaveToHomeContext";
 import { useMediaDevices } from "../MediaDevicesContext";
+import { ObservableScope } from "../state/ObservableScope";
 import { useInitial } from "../useInitial";
 import {
   useTrackProcessor,
   useTrackProcessorSync,
-} from "../livekit/TrackProcessorContext";
-import { usePageTitle } from "../usePageTitle";
+} from "../tracks/TrackProcessorContext";
 import { getValue } from "../utils/observable";
 import { useBehavior } from "../useBehavior";
-import { CallFooter } from "../components/CallFooter";
+import { CallFooter, type FooterSnapshot } from "../components/CallFooter";
+import { useCallViewKeyboardShortcuts } from "../useCallViewKeyboardShortcuts";
+import { createLobbyFooterViewModel } from "../components/CallFooterViewModel";
+import { type ViewModel } from "../state/ViewModel";
+import { useAppBarPrimaryButtonIconKind } from "../AppBar";
 
 interface Props {
   client: MatrixClient;
@@ -81,8 +85,8 @@ export const LobbyView: FC<Props> = ({
   }, []);
 
   const { t } = useTranslation();
-  usePageTitle(matrixInfo.roomName);
 
+  useAppBarPrimaryButtonIconKind("back");
   const audioEnabled = useBehavior(muteStates.audio.enabled$);
   const videoEnabled = useBehavior(muteStates.video.enabled$);
   const toggleAudio = useBehavior(muteStates.audio.toggle$);
@@ -90,6 +94,11 @@ export const LobbyView: FC<Props> = ({
 
   const [settingsModalOpen, setSettingsModalOpen] = useState(false);
   const [settingsTab, setSettingsTab] = useState(defaultSettingsTab);
+
+  // This function incorrectly assumes that there is a camera and microphone, which is not always the case.
+  // TODO: Make sure that this module is resilient when it comes to camera/microphone availability!
+  // Next to the keyboard shortcuts, this is also responsible for catching escape key presses and forwarding the to mobile -> pip.
+  useCallViewKeyboardShortcuts(toggleAudio, toggleVideo, null, null, null);
 
   const openSettings = useCallback(
     () => setSettingsModalOpen(true),
@@ -100,24 +109,23 @@ export const LobbyView: FC<Props> = ({
     [setSettingsModalOpen],
   );
 
-  const navigate = useNavigate();
-  const onLeaveClick = useCallback(() => {
-    navigate("/")?.catch((error) => {
-      logger.error("Failed to navigate to /", error);
-    });
-  }, [navigate]);
+  // Leaving the lobby means going back to wherever the user came from, if
+  // there is such a place
+  const leaveToHome = useLeaveToHome();
+  const hangup =
+    confineToRoom || leaveToHome === null ? undefined : leaveToHome;
 
-  const recentsButtonInFooter = useMediaQuery("(max-height: 500px)");
+  const recentsButtonInFooter = useRootSizeMatches(
+    ({ height }) => height <= 500,
+  );
   const recentsButton = !confineToRoom && (
-    <Link className={styles.recents} to="/">
+    <LeaveToHomeLink className={styles.recents}>
       {t("lobby.leave_button")}
-    </Link>
+    </LeaveToHomeLink>
   );
 
   const devices = useMediaDevices();
-  const videoInputId = useObservableEagerState(
-    devices.videoInput.selected$,
-  )?.id;
+  const videoInputId = useBehavior(devices.videoInput.selected$)?.id;
 
   // Capture the audio options as they were when we first mounted, because
   // we're not doing anything with the audio anyway so we don't need to
@@ -143,7 +151,8 @@ export const LobbyView: FC<Props> = ({
       audio: Object.assign({}, initialAudioOptions),
       video: videoEnabled && {
         deviceId: videoInputId,
-        processor: initialProcessor,
+        processor:
+          initialProcessor && convertToLivekitProcessor(initialProcessor),
       },
     }),
     [initialAudioOptions, videoEnabled, videoInputId, initialProcessor],
@@ -177,6 +186,27 @@ export const LobbyView: FC<Props> = ({
   }, [devices, videoInputId, videoTrack]);
 
   useTrackProcessorSync(videoTrack);
+
+  const [footerVm, setFooterVm] = useState<ViewModel<FooterSnapshot> | null>(
+    null,
+  );
+  useEffect(() => {
+    const footerScope = new ObservableScope();
+    setFooterVm(
+      createLobbyFooterViewModel(
+        footerScope,
+        muteStates,
+        devices,
+        openSettings,
+        hangup,
+        // Logo and header are connected: only show the logo in SPA with header.
+        !hideHeader,
+      ),
+    );
+    return (): void => {
+      footerScope.end();
+    };
+  }, [devices, hangup, hideHeader, muteStates, openSettings]);
 
   // TODO: Unify this component with InCallView, so we can get slick joining
   // animations and don't have to feel bad about reusing its CSS
@@ -221,18 +251,11 @@ export const LobbyView: FC<Props> = ({
           </VideoPreview>
           {!recentsButtonInFooter && recentsButton}
         </div>
-        <CallFooter
-          audioEnabled={audioEnabled}
-          videoEnabled={videoEnabled}
-          toggleAudio={toggleAudio ?? undefined}
-          toggleVideo={toggleVideo ?? undefined}
-          openSettings={openSettings}
-          hangup={!confineToRoom ? onLeaveClick : undefined}
-          // Logo and header are connected. We will only show the logo in SPA with header.
-          hideLogo={hideHeader}
-        >
-          {recentsButtonInFooter && recentsButton}
-        </CallFooter>
+        {footerVm !== null && (
+          <CallFooter vm={footerVm}>
+            {recentsButtonInFooter && recentsButton}
+          </CallFooter>
+        )}
       </div>
       {client && (
         <SettingsModal

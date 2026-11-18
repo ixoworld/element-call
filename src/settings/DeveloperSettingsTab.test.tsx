@@ -7,14 +7,30 @@ Please see LICENSE in the repository root for full details.
 
 import { afterEach, describe, expect, it, type Mock, vi } from "vitest";
 import { render, waitFor, screen } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import userEvent, { type UserEvent } from "@testing-library/user-event";
 import { TooltipProvider } from "@vector-im/compound-web";
 
 import type { MatrixClient } from "matrix-js-sdk";
-import type { Room as LivekitRoom } from "livekit-client";
-import { DeveloperSettingsTab } from "./DeveloperSettingsTab";
-import { getSFUConfigWithOpenID } from "../livekit/openIDSFU";
-import { customLivekitUrl as customLivekitUrlSetting } from "./settings";
+import {
+  DeveloperSettingsTab,
+  type DeveloperSettingsSnapshot,
+  type TransportInfo,
+} from "./DeveloperSettingsTab";
+import { outOfCallDeveloperSettingsTabViewModel } from "./DeveloperSettingsTabViewModel";
+import { createStaticViewModel } from "../state/ViewModel";
+import {
+  customTransport as customTransportSetting,
+  enableExtendedLivekitLogs as enableExtendedLivekitLogsSetting,
+  matrixRTCMode as matrixRTCModeSetting,
+} from "./settings";
+import {
+  authenticateWithTransport,
+  constant,
+  MatrixRTCMode,
+} from "@element-hq/matrixrtc-sdk";
+import type * as MatrixRTCSdk from "@element-hq/matrixrtc-sdk";
+import { exampleTransport, mockConfig } from "../utils/test";
+
 // Mock url params hook to avoid environment-dependent snapshot churn.
 vi.mock("../UrlParams", () => ({
   useUrlParams: (): { mocked: boolean; answer: number } => ({
@@ -24,32 +40,30 @@ vi.mock("../UrlParams", () => ({
 }));
 
 // IMPORTANT: mock the same specifier used by DeveloperSettingsTab
-vi.mock("../livekit/openIDSFU", () => ({
-  getSFUConfigWithOpenID: vi.fn().mockResolvedValue({
+vi.mock("@element-hq/matrixrtc-sdk", async (importOriginal) => ({
+  ...(await importOriginal<typeof MatrixRTCSdk>()),
+  authenticateWithTransport: vi.fn().mockResolvedValue({
     url: "mock-url",
     jwt: "mock-jwt",
   }),
 }));
 
-// Provide a minimal mock of a Livekit Room structure used by the component.
-function createMockLivekitRoom(
-  wsUrl: string,
-  serverInfo: object,
-  metadata: string,
-): { isLocal: boolean; url: string; room: LivekitRoom; livekitAlias: string } {
-  const mockRoom = {
-    serverInfo,
-    metadata,
-    engine: { client: { ws: { url: wsUrl } } },
-    localParticipant: { identity: "localParticipantIdentity" },
-    remoteParticipants: new Map(),
-  } as unknown as LivekitRoom;
-
+/** A transport the panel shows, as the client would hand it out. */
+function mockTransport(
+  url: string,
+  local: boolean,
+  resolved?: { url: string; roomAlias: string; identity: string },
+): TransportInfo {
   return {
-    isLocal: true,
-    url: wsUrl,
-    room: mockRoom,
-    livekitAlias: "TestAlias",
+    local,
+    transport: {
+      type: "livekit",
+      id: url,
+      raw: { type: "livekit", livekit_service_url: url },
+      resolved$: constant(
+        resolved && { type: "livekit", token: "secret", ...resolved },
+      ),
+    },
   };
 }
 
@@ -65,41 +79,41 @@ function createMockMatrixClient(): MatrixClient {
   } as unknown as MatrixClient;
 }
 
+/**
+ * Types the JSON representation of an object into the given element.
+ */
+async function typeJson(
+  user: UserEvent,
+  element: Element,
+  object: object,
+): Promise<void> {
+  // `user.type` requires us to escape brackets by doubling them
+  await user.type(
+    element,
+    JSON.stringify(object).replace(/([{[\]])/g, (c) => c + c),
+  );
+}
+
 describe("DeveloperSettingsTab", () => {
   it("renders and matches snapshot", async () => {
     const client = createMockMatrixClient();
 
-    const livekitRooms: {
-      room: LivekitRoom;
-      url: string;
-      isLocal?: boolean;
-      livekitAlias: string;
-    }[] = [
-      createMockLivekitRoom(
-        "wss://local-sfu.example.org",
-        { region: "local", version: "1.2.3" },
-        "local-metadata",
-      ),
-      {
-        isLocal: false,
-        livekitAlias: "TestAlias2",
-        url: "wss://remote-sfu.example.org",
-        room: {
-          localParticipant: { identity: "localParticipantIdentity" },
-          remoteParticipants: new Map(),
-          serverInfo: { region: "remote", version: "4.5.6" },
-          metadata: "remote-metadata",
-          engine: { client: { ws: { url: "wss://remote-sfu.example.org" } } },
-        } as unknown as LivekitRoom,
-      },
+    const transports = [
+      mockTransport("https://local-sfu.example.org/jwt", true, {
+        url: "wss://local-sfu.example.org",
+        roomAlias: "TestAlias",
+        identity: "localParticipantIdentity",
+      }),
+      mockTransport("https://remote-sfu.example.org/jwt", false),
     ];
 
     const { container } = render(
       <DeveloperSettingsTab
         client={client}
         roomId={"#room:example.org"}
-        livekitRooms={livekitRooms}
+        transports={transports}
         env={{ MY_MOCK_ENV: 10, ENV: "test" } as unknown as ImportMetaEnv}
+        vm={outOfCallDeveloperSettingsTabViewModel}
       />,
     );
 
@@ -111,17 +125,18 @@ describe("DeveloperSettingsTab", () => {
 
     expect(container).toMatchSnapshot();
   });
-  describe("custom livekit url", () => {
+  describe("custom transport", () => {
     afterEach(() => {
-      customLivekitUrlSetting.setValue(null);
+      customTransportSetting.setValue(null);
     });
     const client = {
       doesServerSupportUnstableFeature: vi.fn().mockResolvedValue(true),
       getCrypto: () => ({ getVersion: (): string => "x" }),
       getUserId: () => "@u:hs",
       getDeviceId: () => "DEVICE",
+      getDomain: () => "hs",
     } as unknown as MatrixClient;
-    it("will not update custom livekit url without roomId", async () => {
+    it("will not update custom transport without roomId", async () => {
       const user = userEvent.setup();
 
       render(
@@ -129,21 +144,22 @@ describe("DeveloperSettingsTab", () => {
           <DeveloperSettingsTab
             client={client}
             env={{} as unknown as ImportMetaEnv}
+            vm={outOfCallDeveloperSettingsTabViewModel}
           />
         </TooltipProvider>,
       );
 
-      const input = screen.getByLabelText("Custom Livekit-url");
+      const input = screen.getByLabelText("Custom transport JSON");
       await user.clear(input);
-      await user.type(input, "wss://example.livekit.invalid");
+      await typeJson(user, input, exampleTransport);
 
       const saveButton = screen.getByRole("button", { name: "Save" });
       await user.click(saveButton);
-      expect(getSFUConfigWithOpenID).not.toHaveBeenCalled();
+      expect(authenticateWithTransport).not.toHaveBeenCalled();
 
-      expect(customLivekitUrlSetting.getValue()).toBe(null);
+      expect(customTransportSetting.getValue()).toBe(null);
     });
-    it("will not update custom livekit url without text in input", async () => {
+    it("will not update custom transport without text in input", async () => {
       const user = userEvent.setup();
 
       render(
@@ -152,20 +168,21 @@ describe("DeveloperSettingsTab", () => {
             client={client}
             roomId="#testRoom"
             env={{} as unknown as ImportMetaEnv}
+            vm={outOfCallDeveloperSettingsTabViewModel}
           />
         </TooltipProvider>,
       );
 
-      const input = screen.getByLabelText("Custom Livekit-url");
+      const input = screen.getByLabelText("Custom transport JSON");
       await user.clear(input);
 
       const saveButton = screen.getByRole("button", { name: "Save" });
       await user.click(saveButton);
-      expect(getSFUConfigWithOpenID).not.toHaveBeenCalled();
+      expect(authenticateWithTransport).not.toHaveBeenCalled();
 
-      expect(customLivekitUrlSetting.getValue()).toBe(null);
+      expect(customTransportSetting.getValue()).toBe(null);
     });
-    it("will not update custom livekit url when pressing cancel", async () => {
+    it("will not update custom transport when pressing cancel", async () => {
       const user = userEvent.setup();
 
       render(
@@ -174,11 +191,12 @@ describe("DeveloperSettingsTab", () => {
             client={client}
             roomId="#testRoom"
             env={{} as unknown as ImportMetaEnv}
+            vm={outOfCallDeveloperSettingsTabViewModel}
           />
         </TooltipProvider>,
       );
 
-      const input = screen.getByLabelText("Custom Livekit-url");
+      const input = screen.getByLabelText("Custom transport JSON");
       await user.clear(input);
       await user.type(input, "wss://example.livekit.invalid");
 
@@ -186,11 +204,11 @@ describe("DeveloperSettingsTab", () => {
         name: "Reset overwrite",
       });
       await user.click(cancelButton);
-      expect(getSFUConfigWithOpenID).not.toHaveBeenCalled();
+      expect(authenticateWithTransport).not.toHaveBeenCalled();
 
-      expect(customLivekitUrlSetting.getValue()).toBe(null);
+      expect(customTransportSetting.getValue()).toBe(null);
     });
-    it("will update custom livekit url", async () => {
+    it("will update custom transport", async () => {
       const user = userEvent.setup();
 
       render(
@@ -199,28 +217,35 @@ describe("DeveloperSettingsTab", () => {
             client={client}
             roomId="#testRoom"
             env={{} as unknown as ImportMetaEnv}
+            vm={outOfCallDeveloperSettingsTabViewModel}
           />
         </TooltipProvider>,
       );
 
-      const input = screen.getByLabelText("Custom Livekit-url");
+      const input = screen.getByLabelText("Custom transport JSON");
       await user.clear(input);
-      await user.type(input, "wss://example.livekit.valid");
+      await typeJson(user, input, {
+        type: "livekit",
+        url: "wss://example.livekit.valid",
+      });
 
       const saveButton = screen.getByRole("button", { name: "Save" });
       await user.click(saveButton);
-      expect(getSFUConfigWithOpenID).toHaveBeenCalledWith(
-        expect.anything(),
-        expect.anything(),
-        "wss://example.livekit.valid",
-        "#testRoom",
+      expect(authenticateWithTransport).toHaveBeenCalledWith(
+        expect.objectContaining({
+          transport: { type: "livekit", url: "wss://example.livekit.valid" },
+          serverName: "hs",
+          roomId: "#testRoom",
+          role: "publisher",
+        }),
       );
 
-      expect(customLivekitUrlSetting.getValue()).toBe(
-        "wss://example.livekit.valid",
-      );
+      expect(customTransportSetting.getValue()).toEqual({
+        type: "livekit",
+        url: "wss://example.livekit.valid",
+      });
     });
-    it("will show error on invalid url", async () => {
+    it("will show error on unreachable transport", async () => {
       const user = userEvent.setup();
 
       render(
@@ -229,23 +254,243 @@ describe("DeveloperSettingsTab", () => {
             client={client}
             roomId="#testRoom"
             env={{} as unknown as ImportMetaEnv}
+            vm={outOfCallDeveloperSettingsTabViewModel}
           />
         </TooltipProvider>,
       );
 
-      const input = screen.getByLabelText("Custom Livekit-url");
+      const input = screen.getByLabelText("Custom transport JSON");
       await user.clear(input);
-      await user.type(input, "wss://example.livekit.valid");
+      await typeJson(user, input, {
+        type: "livekit",
+        url: "wss://example.livekit.valid",
+      });
 
       const saveButton = screen.getByRole("button", { name: "Save" });
-      (getSFUConfigWithOpenID as Mock).mockImplementation(() => {
-        throw new Error("Invalid URL");
+      (authenticateWithTransport as Mock).mockImplementation(() => {
+        throw new Error("Failed to get SFU config");
       });
       await user.click(saveButton);
       expect(
-        screen.getByText("invalid URL (did not update)"),
+        screen.getByText("invalid transport (did not update)"),
       ).toBeInTheDocument();
-      expect(customLivekitUrlSetting.getValue()).toBe(null);
+      expect(customTransportSetting.getValue()).toBe(null);
+    });
+  });
+
+  describe("enable extended livekit logs", () => {
+    afterEach(() => {
+      enableExtendedLivekitLogsSetting.setValue(false);
+    });
+
+    it("toggles extended livekit logs setting", async () => {
+      const user = userEvent.setup();
+      const client = createMockMatrixClient();
+
+      render(
+        <TooltipProvider>
+          <DeveloperSettingsTab
+            client={client}
+            env={{} as unknown as ImportMetaEnv}
+            vm={outOfCallDeveloperSettingsTabViewModel}
+          />
+        </TooltipProvider>,
+      );
+
+      const checkbox = screen.getByLabelText("Enable extended livekit logs");
+
+      // Initial state should be unchecked (default false)
+      expect(checkbox).not.toBeChecked();
+      expect(enableExtendedLivekitLogsSetting.getValue()).toBe(false);
+
+      // Click to enable
+      await user.click(checkbox);
+      expect(checkbox).toBeChecked();
+      expect(enableExtendedLivekitLogsSetting.getValue()).toBe(true);
+
+      // Click to disable
+      await user.click(checkbox);
+      expect(checkbox).not.toBeChecked();
+      expect(enableExtendedLivekitLogsSetting.getValue()).toBe(false);
+    });
+
+    it("Use the current setting value on render", () => {
+      const client = createMockMatrixClient();
+
+      // Set the value to true before rendering
+      enableExtendedLivekitLogsSetting.setValue(true);
+
+      render(
+        <TooltipProvider>
+          <DeveloperSettingsTab
+            client={client}
+            env={{} as unknown as ImportMetaEnv}
+            vm={outOfCallDeveloperSettingsTabViewModel}
+          />
+        </TooltipProvider>,
+      );
+
+      const checkbox = screen.getByLabelText("Enable extended livekit logs");
+      expect(checkbox).toBeChecked();
+      expect(enableExtendedLivekitLogsSetting.getValue()).toBe(true);
+    });
+  });
+
+  describe("matrix rtc mode", () => {
+    afterEach(() => {
+      matrixRTCModeSetting.setValue(MatrixRTCMode.Compatibility);
+      vi.restoreAllMocks();
+    });
+
+    function getModeRadios(): {
+      compatibility: HTMLInputElement;
+      matrix20: HTMLInputElement;
+    } {
+      return {
+        compatibility: screen.getByDisplayValue(
+          MatrixRTCMode.Compatibility,
+        ) as HTMLInputElement,
+        matrix20: screen.getByDisplayValue(
+          MatrixRTCMode.Matrix_2_0,
+        ) as HTMLInputElement,
+      };
+    }
+
+    it("radios reflect the localStorage setting when config does not force the mode", async () => {
+      mockConfig({});
+      matrixRTCModeSetting.setValue(MatrixRTCMode.Compatibility);
+      const client = createMockMatrixClient();
+
+      render(
+        <TooltipProvider>
+          <DeveloperSettingsTab
+            client={client}
+            env={{} as unknown as ImportMetaEnv}
+            vm={outOfCallDeveloperSettingsTabViewModel}
+          />
+        </TooltipProvider>,
+      );
+
+      await waitFor(() =>
+        expect(client.doesServerSupportUnstableFeature).toHaveBeenCalled(),
+      );
+
+      const radios = getModeRadios();
+      expect(radios.compatibility).toBeChecked();
+      expect(radios.matrix20).not.toBeChecked();
+      // None are disabled by config; only Matrix_2_0 may be disabled by sticky-events support.
+      expect(radios.compatibility).not.toBeDisabled();
+    });
+
+    it.each([MatrixRTCMode.Compatibility, MatrixRTCMode.Matrix_2_0])(
+      "disables all radios and shows the config value (%s) as checked when matrix_rtc_mode is set",
+      async (configMode) => {
+        mockConfig({ matrix_rtc_mode: configMode });
+        // Local setting is intentionally different from the config value to
+        // prove config wins.
+        matrixRTCModeSetting.setValue(
+          configMode === MatrixRTCMode.Compatibility
+            ? MatrixRTCMode.Matrix_2_0
+            : MatrixRTCMode.Compatibility,
+        );
+        const client = createMockMatrixClient();
+
+        render(
+          <TooltipProvider>
+            <DeveloperSettingsTab
+              client={client}
+              env={{} as unknown as ImportMetaEnv}
+              vm={outOfCallDeveloperSettingsTabViewModel}
+            />
+          </TooltipProvider>,
+        );
+
+        await waitFor(() =>
+          expect(client.doesServerSupportUnstableFeature).toHaveBeenCalled(),
+        );
+
+        const radios = getModeRadios();
+        expect(radios.compatibility).toBeDisabled();
+        expect(radios.matrix20).toBeDisabled();
+
+        const checkedValue = (
+          {
+            [MatrixRTCMode.Compatibility]: radios.compatibility,
+            [MatrixRTCMode.Matrix_2_0]: radios.matrix20,
+          } as const
+        )[configMode];
+        expect(checkedValue).toBeChecked();
+      },
+    );
+  });
+
+  describe("KeyRotationStatus", () => {
+    it("displays active status when key rotation is not suppressed", async () => {
+      const client = createMockMatrixClient();
+      const vm = createStaticViewModel<DeveloperSettingsSnapshot>({
+        keyRotation: { suppressed: false, participantCount: 5 },
+      });
+
+      render(
+        <TooltipProvider>
+          <DeveloperSettingsTab
+            client={client}
+            env={{} as unknown as ImportMetaEnv}
+            vm={vm}
+          />
+        </TooltipProvider>,
+      );
+
+      await waitFor(() =>
+        expect(
+          screen.getByText(/Media key rotation: active \(5 participants\)/),
+        ).toBeInTheDocument(),
+      );
+    });
+
+    it("displays suppressed status when key rotation is suppressed", async () => {
+      const client = createMockMatrixClient();
+      const vm = createStaticViewModel<DeveloperSettingsSnapshot>({
+        keyRotation: { suppressed: true, participantCount: 50 },
+      });
+
+      render(
+        <TooltipProvider>
+          <DeveloperSettingsTab
+            client={client}
+            env={{} as unknown as ImportMetaEnv}
+            vm={vm}
+          />
+        </TooltipProvider>,
+      );
+
+      await waitFor(() =>
+        expect(
+          screen.getByText(
+            /Media key rotation: suppressed, participant limit reached \(50 participants\)/,
+          ),
+        ).toBeInTheDocument(),
+      );
+    });
+
+    it("does not render KeyRotationStatus when not in a call", async () => {
+      const client = createMockMatrixClient();
+
+      render(
+        <TooltipProvider>
+          <DeveloperSettingsTab
+            client={client}
+            env={{} as unknown as ImportMetaEnv}
+            vm={outOfCallDeveloperSettingsTabViewModel}
+          />
+        </TooltipProvider>,
+      );
+
+      await waitFor(() =>
+        expect(
+          screen.queryByText(/Media key rotation:/),
+        ).not.toBeInTheDocument(),
+      );
     });
   });
 });

@@ -12,9 +12,7 @@ import { HOST1, HOST2, type RtcMode, TestHelpers } from "./test-helpers";
 
 const modePairs: [RtcMode, RtcMode][] = [
   ["compat", "compat"],
-  ["legacy", "legacy"],
-  ["legacy", "compat"],
-  ["compat", "legacy"],
+  // TODO: Compatibility + Matrix 2.0?
 ];
 
 modePairs.forEach(([rtcMode1, rtcMode2]) => {
@@ -38,8 +36,6 @@ modePairs.forEach(([rtcMode1, rtcMode2]) => {
       await TestHelpers.createRoom(roomName, florian.page, [timo.mxId]);
 
       await TestHelpers.acceptRoomInvite(roomName, timo.page);
-
-      await florian.page.pause();
 
       await TestHelpers.openWidgetSetEmbeddedElementCallRtcModeCloseWidget(
         florian.page,
@@ -76,8 +72,6 @@ modePairs.forEach(([rtcMode1, rtcMode2]) => {
 
         await TestHelpers.expectVisibleVideoCount(frame, 2);
       }
-
-      // await florian.page.pause();
     },
   );
 });

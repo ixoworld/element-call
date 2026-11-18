@@ -11,14 +11,12 @@ import {
   useCallback,
   useMemo,
 } from "react";
-import { distinctUntilChanged } from "rxjs";
-import { useObservableEagerState } from "observable-hooks";
 
 import { type GridLayout as GridLayoutModel } from "../state/layout-types.ts";
 import styles from "./GridLayout.module.css";
-import { useInitial } from "../useInitial";
 import { type CallLayout, arrangeTiles } from "./CallLayout";
 import { type DragCallback, useUpdateLayout, useVisibleTiles } from "./Grid";
+import { useBehavior } from "../useBehavior";
 
 interface GridCSSProperties extends CSSProperties {
   "--gap": string;
@@ -32,31 +30,26 @@ interface GridCSSProperties extends CSSProperties {
  */
 export const makeGridLayout: CallLayout<GridLayoutModel> = ({
   minBounds$,
-  spotlightAlignment$,
 }) => ({
-  scrollingOnTop: false,
+  foreground: "fixed",
 
   // The "fixed" (non-scrolling) part of the layout is where the spotlight tile
   // lives
   fixed: function GridLayoutFixed({ ref, model, Slot }): ReactNode {
     useUpdateLayout();
-    const alignment = useObservableEagerState(
-      useInitial(() =>
-        spotlightAlignment$.pipe(
-          distinctUntilChanged(
-            (a1, a2) => a1.block === a2.block && a1.inline === a2.inline,
-          ),
-        ),
-      ),
-    );
+    const alignment = useBehavior(model.spotlightAlignment$);
 
     const onDragSpotlight: DragCallback = useCallback(
-      ({ xRatio, yRatio }) =>
-        spotlightAlignment$.next({
-          block: yRatio < 0.5 ? "start" : "end",
-          inline: xRatio < 0.5 ? "start" : "end",
-        }),
-      [],
+      ({ xRatio, yRatio }) => {
+        const block = yRatio < 0.5 ? "start" : "end";
+        const inline = xRatio < 0.5 ? "start" : "end";
+        // A drag reports the same alignment on every move; only a change is
+        // worth a re-render
+        const current = model.spotlightAlignment$.value;
+        if (current.block !== block || current.inline !== inline)
+          model.spotlightAlignment$.next({ block, inline });
+      },
+      [model.spotlightAlignment$],
     );
 
     return (
@@ -79,7 +72,7 @@ export const makeGridLayout: CallLayout<GridLayoutModel> = ({
   scrolling: function GridLayout({ ref, model, Slot }): ReactNode {
     useUpdateLayout();
     useVisibleTiles(model.setVisibleTiles);
-    const { width, height: minHeight } = useObservableEagerState(minBounds$);
+    const { width, height: minHeight } = useBehavior(minBounds$);
     const { gap, tileWidth, tileHeight } = useMemo(
       () => arrangeTiles(width, minHeight, model.grid.length),
       [width, minHeight, model.grid.length],
