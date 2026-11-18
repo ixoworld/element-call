@@ -6,7 +6,6 @@ Please see LICENSE in the repository root for full details.
 */
 
 import { type MatrixClient, type Room as MatrixRoom } from "matrix-js-sdk";
-import { type Room as LivekitRoom } from "livekit-client";
 import {
   type FC,
   type PointerEvent as ReactPointerEvent,
@@ -126,22 +125,6 @@ declare module "react" {
   interface CSSProperties {
     "--call-view-safe-area-inset-top"?: string;
     "--call-view-safe-area-inset-bottom"?: string;
-  }
-}
-
-// ixo fork: expose the active LiveKit Rooms so external observers (e.g. the
-// recording bot's headless browser) can subscribe to LiveKit events and read
-// participant identities ("${matrix_user_id}:${device_id}"). Upstream keeps
-// the Room references inside CallViewModel's RxJS state, unreachable from
-// outside React. Mirroring them onto `window` is the smallest change that
-// gives consumers the full LiveKit API.
-declare global {
-  interface Window {
-    livekitRooms?: {
-      room: LivekitRoom;
-      livekitAlias: string | undefined;
-      url: string | undefined;
-    }[];
   }
 }
 
@@ -702,18 +685,6 @@ export const InCallView: FC<InCallViewProps> = ({
   const localTransport = useBehavior(
     localMember?.transport$ ?? constant(undefined),
   );
-
-  // ixo fork: expose live LiveKit Rooms for the recording bot.
-  useEffect(() => {
-    window.livekitRooms = allConnections.getConnections().map((c) => ({
-      room: c.livekitRoom,
-      livekitAlias: c.livekitAlias,
-      url: c.transport.livekit_service_url,
-    }));
-    return (): void => {
-      delete window.livekitRooms;
-    };
-  }, [allConnections]);
 
   return (
     // The pointer handler here exists to control the visibility of the footer,

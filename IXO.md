@@ -4,10 +4,10 @@ This is IXO's fork of [element-hq/element-call](https://github.com/element-hq/el
 
 ## Branch layout
 
-- `livekit/main` — tracks upstream `element-hq/element-call`. Pull from upstream here, do not commit IXO changes to this branch.
-- `ixo` — IXO's working branch. Contains the patches below, on top of `livekit/main`.
+- `ixo` — IXO's working branch and Vercel's production branch (every merge deploys to `element-call-silk.vercel.app`, which the recording bot uses). Contains the patches below on top of an upstream release tag.
+- Upstream is `element-hq/element-call` (add it as the `upstream` remote). Track upstream **release tags** (`vX.Y.Z`), not upstream `main`.
 
-To pick up upstream changes: pull `livekit/main`, then merge `livekit/main` into `ixo`.
+Current base: upstream `v0.28.2` (Nov 5 2026), merged into `ixo` on top of the earlier base (upstream `main` at `d335a307`, Apr 27 2026).
 
 ## What we use this for
 
@@ -19,26 +19,31 @@ The recording bot needs to know **who is speaking when** so transcripts can attr
 
 ### 1. Expose live LiveKit Rooms on `window.livekitRooms`
 
-**File**: `src/room/InCallView.tsx`
+**File**: `sdk/src/media-backend/livekit/LivekitBackend.ts`
 
-`CallViewModel.allConnections$` already holds every active LiveKit `Room` (one per SFU connection), and React subscribes to it via `useBehavior(vm.allConnections$)`. Upstream uses this to populate the developer-settings tab. We add a `useEffect` that mirrors the same data onto `window.livekitRooms` and clears it on unmount.
+Since v0.28.1 the MatrixRTC and LiveKit logic lives in the in-repo SDK (`sdk/`), and the app's `CallViewModel` no longer sees LiveKit `Room` objects (the old `vm.allConnections$` is gone). The LiveKit backend's `connectionMap$` holds every active connection (one per SFU transport), each with its `livekitRoom`. We subscribe to it in the backend's scope, mirror it onto `window.livekitRooms`, and delete the global when the scope ends.
 
 ```ts
-useEffect(() => {
-  window.livekitRooms = allConnections.getConnections().map((c) => ({
+connectionMap$.pipe(scope.bind()).subscribe(({ value: connectionMap }) => {
+  window.livekitRooms = connectionMap.getConnections().map((c) => ({
     room: c.livekitRoom,
     livekitAlias: c.livekitAlias,
-    url: c.transport.livekit_service_url,
+    url:
+      "livekit_service_url" in c.transport
+        ? c.transport.livekit_service_url
+        : undefined,
   }));
-  return (): void => { delete window.livekitRooms; };
-}, [allConnections]);
+});
+scope.onEnd(() => {
+  delete window.livekitRooms;
+});
 ```
 
-This gives any in-page consumer the full `livekit-client` Room API — `RoomEvent.ActiveSpeakersChanged`, `TrackSubscribed`, `room.remoteParticipants` — and crucially each `RemoteParticipant.identity` is `${matrix_user_id}:${device_id}`, which is what the recording bot needs.
+The shape of `window.livekitRooms` (`{ room, livekitAlias, url }[]`) is unchanged, so the bot needs no change. This gives any in-page consumer the full `livekit-client` Room API — `RoomEvent.ActiveSpeakersChanged`, `TrackSubscribed`, `room.remoteParticipants` — and each `RemoteParticipant.identity` is `${matrix_user_id}:${device_id}` for participants authenticated through the JWT service's `/sfu/get` endpoint (every publisher on our servers).
 
-A matching `declare global { interface Window { livekitRooms?: ... } }` block sits next to the existing `window.rtcSession` and `window.matrixclient` declarations.
+The `declare global { interface Window { livekitRooms?: ... } }` block sits at the top of the same file. Upstream's `AGENTS.md` forbids page globals in upstream code; this is a deliberate fork-only divergence.
 
-**Why this approach**: it's the smallest possible patch (one `useEffect`), it reuses upstream's already-public `allConnections$` Behavior, and it doesn't change any existing behaviour. Alternatives we considered:
+**Why this approach**: it's the smallest patch (one subscription in one file), it reads the backend's own connection list, and it doesn't change any existing behaviour. Alternatives we considered:
 
 - **React fiber walk from outside** — works without any source change, but is fragile to React minification across upstream releases. Maintaining the fork is cheaper.
 - **Monkey-patching the `livekit-client` `Room` prototype from `evaluateOnNewDocument`** — works but depends on the bundler not renaming things; brittle.
@@ -49,23 +54,31 @@ A matching `declare global { interface Window { livekitRooms?: ... } }` block si
 The fork is a drop-in replacement for upstream — same `pnpm build:embedded`, same `dist/` output. Two consumption paths:
 
 1. **Vendored into the portal** — `impacts-x-web` copies `dist/` to `public/element-call/`. Today this is automated via a `copy-element-call.js` script that pulls from the npm package; for the fork, copy `dist/` directly (or update the script to point at this repo).
-2. **Standalone Vercel deployment** — push the `ixo` branch to GitHub, point Vercel at it. Build command `pnpm build:embedded`, output `dist`, install `pnpm install --frozen-lockfile`. Note: a fresh deploy serves placeholder URLs in `config.json`; the recording bot intercepts and overrides `config.json` at runtime so this doesn't affect the bot, but human visitors to the standalone URL will see initialisation errors until `config.json` is fixed (edit `vite-embedded.config.ts` to bake in real homeserver + LiveKit URLs, or serve a custom `config.json` via a Vercel rewrite).
+2. **Standalone Vercel deployment** (Vercel project `ixo-world/element-call`, production branch `ixo`). Build command `pnpm build:embedded`, output `dist`, install `pnpm install --frozen-lockfile`, Node 24.x. Vercel uses the pnpm version in `package.json#packageManager` (pnpm 11 since v0.28; pnpm 10 cannot read this lockfile's workspace settings). The embedded build ships no `config.json`; the recording bot intercepts the `config.json` request and answers with its own (homeserver, `livekit.livekit_service_url` fallback), so human visitors to the standalone URL get no homeserver.
+
+The bot loads the page as a standalone app (no widget parameters), injects its session into the `matrix-auth-store` localStorage key, and clicks the `lobby_joinCall`, `incall_mute`, `incall_videomute` and `incall_leave` buttons by `data-testid`. Keep those working.
 
 ## Maintenance
 
 When upstream releases a new version:
 
 ```bash
-git checkout livekit/main
-git pull upstream main
-git checkout ixo
-git merge livekit/main
-pnpm install
-pnpm lint:types
+git fetch upstream --tags
+git switch -c <you>/update-upstream-vX.Y.Z origin/ixo
+git merge vX.Y.Z
+pnpm install --frozen-lockfile
+pnpm lint
+pnpm test:unit --run
 pnpm build:embedded
 ```
 
-The patch only touches one file (`src/room/InCallView.tsx`) and references stable upstream APIs (`vm.allConnections$`, `getConnections()`, `connectionItem.livekitRoom`). Conflicts on rebase should be rare.
+Then open a PR into `ixo`: the PR's Vercel preview build checks the build on Vercel before the merge deploys to production.
+
+Always run `pnpm lint` (it includes `tsc`). The v0.28.2 merge was textually clean but left the old patch pointing at a variable upstream had removed; Vite builds without type-checking, so only `tsc` caught it before it reached production.
+
+The patch only touches one file and reads backend internals (`connectionMap$`, `getConnections()`, `Connection.livekitRoom`, `Connection.livekitAlias`). Check them on every upstream merge.
+
+Server requirements to keep in mind: on our homeservers the transport comes from the bot's `config.json` fallback (`org.matrix.msc4143` is not advertised), and our `lk-jwt-service` (0.3.0) only serves `/sfu/get`. Element Call ≥ v0.28.1 authenticates subscribe-only connections (transports other than our own) through `/get_token`, which needs lk-jwt-service ≥ 0.4.0.
 
 ## Licence
 

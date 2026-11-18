@@ -7,6 +7,7 @@ Please see LICENSE in the repository root for full details.
 
 import { type MatrixClient } from "matrix-js-sdk";
 import { type Logger } from "matrix-js-sdk/lib/logger";
+import { type Room as LivekitRoom } from "livekit-client";
 import {
   isUnstableLivekitTransport,
   type Transport,
@@ -65,6 +66,19 @@ import {
   participantSourcesEqual,
 } from "./LivekitMemberMedia";
 import { createLivekitLocalMedia } from "./LocalMedia";
+
+// ixo fork: the LiveKit Rooms of the active connections, one per transport,
+// for observers outside the app (the recording bot). Each participant
+// identity is "${matrix_user_id}:${device_id}" on the legacy /sfu/get flow.
+declare global {
+  interface Window {
+    livekitRooms?: {
+      room: LivekitRoom;
+      livekitAlias: string | undefined;
+      url: string | undefined;
+    }[];
+  }
+}
 
 export interface LivekitBackendOptions {
   /**
@@ -131,6 +145,23 @@ export function createLivekitBackend(
       }),
     ).pipe(switchMap((map$) => map$ ?? of(new Epoch(new ConnectionMap())))),
   );
+
+  // ixo fork: mirror the live LiveKit Rooms onto window.livekitRooms for the
+  // recording bot's headless browser (see IXO.md). This is the only place
+  // that holds the Room objects since upstream moved them into the SDK.
+  connectionMap$.pipe(scope.bind()).subscribe(({ value: connectionMap }) => {
+    window.livekitRooms = connectionMap.getConnections().map((c) => ({
+      room: c.livekitRoom,
+      livekitAlias: c.livekitAlias,
+      url:
+        "livekit_service_url" in c.transport
+          ? c.transport.livekit_service_url
+          : undefined,
+    }));
+  });
+  scope.onEnd(() => {
+    delete window.livekitRooms;
+  });
 
   const localMedia_ = createLivekitLocalMedia({
     scope,

@@ -527,6 +527,39 @@ describe("createLivekitBackend", () => {
       expect(remote?.connection.serverName).toBe("sample.com");
     });
   });
+
+  // ixo fork: the recording bot reads the LiveKit Rooms from window.livekitRooms
+  it("mirrors the live LiveKit Rooms onto window.livekitRooms until its scope ends", async () => {
+    fetchMock.post(homeserverEndpoint, 404);
+    fetchMock.post(`${exampleServiceUrl}/delegate_delayed_leave`, 404);
+    const scope = new ObservableScope();
+    const b = createLivekitBackend(
+      scope,
+      {
+        roomId: "!room:example.org",
+        slotId: "m.call#ROOM",
+        ownMembershipIdentity: ownMemberMock,
+        publish: [],
+        encryptionSystem: { kind: E2eeType.NONE },
+        mediaKeys$: NEVER,
+        timings: defaultSessionTimings,
+        logger,
+      },
+      { client },
+    );
+    await b.prepareLocalTransport(exampleTransport);
+
+    expect(window.livekitRooms).toEqual([
+      {
+        room: connections[0].connection.livekitRoom,
+        livekitAlias: connections[0].connection.livekitAlias,
+        url: exampleServiceUrl,
+      },
+    ]);
+
+    scope.end();
+    expect(window.livekitRooms).toBeUndefined();
+  });
 });
 
 /** The parts of a LiveKit room the local media and the member media read. */
